@@ -192,6 +192,8 @@ const S = {
   bookPicker: null,
   board: [],
   monsterDefenses: {}, // cache non persistita: { [boardItemId]: {resist,immune,vuln,hpFormula,hpAverage} }
+  spellbook: [],
+  sharedBook: null, // lista temporanea da un link condiviso, non persistita finché non si salva
 };
 
 const PWA = {
@@ -238,6 +240,16 @@ const D = {
   boardAddPgBtn:   $('board-add-pg-btn'),
   boardSearchInput:   $('board-search-input'),
   boardSearchResults: $('board-search-results'),
+  spellbookToggleBtn:  $('spellbook-toggle-btn'),
+  spellbookToggleCount:$('spellbook-toggle-count'),
+  spellbookPanel:      $('spellbook-panel'),
+  spellbookList:       $('spellbook-list'),
+  spellbookCount:      $('spellbook-count'),
+  spellbookCloseBtn:   $('spellbook-close-btn'),
+  spellbookClearBtn:   $('spellbook-clear-btn'),
+  spellbookShareBtn:   $('spellbook-share-btn'),
+  spellbookSharedBanner: $('spellbook-shared-banner'),
+  spellbookSaveSharedBtn: $('spellbook-save-shared-btn'),
 };
 
 // ── Utils ──────────────────────────────────────────────
@@ -859,6 +871,15 @@ function renderListItem(ent) {
   const orig = (ent.originalName && ent.originalName !== ent.name)
     ? `<div class="ent-orig">${esc(ent.originalName)}</div>` : '';
   const pinned = isPinned(ent.id);
+
+  // bottone "☆ Libro": solo per gli incantesimi, è il libro del player, non
+  // la plancia del DM (che invece funziona per qualsiasi entità).
+  const inBook = ent.entityType === 'spell' && isInBook(ent.id);
+  const bookBtn = ent.entityType === 'spell' ? `
+      <button class="ent-book-btn ${inBook?'in-book':''}"
+        data-book-id="${esc(ent.id)}" data-book-slug="${esc(ent.slug)}" data-book-src="${esc(ent.source||'')}" data-book-name="${esc(ent.name)}"
+        title="${inBook?'Rimuovi dal mio libro':'Aggiungi al mio libro'}">${inBook?'⭐':'☆'}</button>` : '';
+
   return `
     <div class="ent-item"
          data-id="${esc(ent.id)}"
@@ -871,6 +892,7 @@ function renderListItem(ent) {
         ${orig}
         <div class="ent-meta">${listBadges(ent)}</div>
       </div>
+      ${bookBtn}
       <button class="ent-pin-btn ${pinned?'pinned':''}"
         data-pin-id="${esc(ent.id)}" data-pin-type="${esc(ent.entityType)}"
         data-pin-slug="${esc(ent.slug)}" data-pin-src="${esc(ent.source||'')}" data-pin-name="${esc(ent.name)}"
@@ -1783,6 +1805,12 @@ async function renderDetail(ent, inModal = false) {
        <span class="pin-btn-icon">${pinned?'📍':'📌'}</span> <span class="pin-btn-label">${pinned?'Sulla plancia':'Plancia'}</span>
      </button>`;
 
+  const inBook = ent.entityType === 'spell' && isInBook(ent.id);
+  const bookBtn = ent.entityType === 'spell' ? `<button class="book-btn ${inBook?'in-book':''}"
+       data-book-id="${esc(ent.id)}" data-book-slug="${esc(ent.slug||'')}" data-book-src="${esc(ent.source||'')}" data-book-name="${esc(ent.name)}">
+       <span class="book-btn-icon">${inBook?'⭐':'☆'}</span> <span class="book-btn-label">${inBook?'Nel libro':'Libro'}</span>
+     </button>` : '';
+
   const backBtn = inModal ? '' : '<div class="det-back" id="det-back">← Lista</div>';
 
   let body;
@@ -1805,7 +1833,7 @@ async function renderDetail(ent, inModal = false) {
         <div class="det-name">${esc(ent.name)}</div>
         ${origHtml}
         <div class="det-badges">${badges}</div>
-        <div class="det-actions">${imgBtn}${shareBtn}${pinBtn}</div>
+        <div class="det-actions">${imgBtn}${shareBtn}${bookBtn}${pinBtn}</div>
       </div>
       ${tokenHtml}
     </div>
@@ -2854,14 +2882,13 @@ function toggleBoardFocus() {
 }
 
 // ── Share button ────────────────────────────────────────
-async function shareEntity(btn) {
-  const id   = btn.dataset.shareId;
-  const name = btn.dataset.shareName;
-  const url  = `${location.origin}${location.pathname}#${id}`;
-
+// Condivide un link (Web Share API se disponibile, altrimenti copia negli
+// appunti) e mostra un feedback "✓ Copiato!" sul bottone per un momento.
+// Usato sia per condividere una singola entità sia il libro degli incantesimi.
+async function shareUrl(url, title, btn) {
   if (navigator.share) {
     try {
-      await navigator.share({ title: name, url });
+      await navigator.share({ title, url });
       return;
     } catch (err) {
       if (err.name === 'AbortError') return; // utente ha annullato la condivisione
@@ -2889,6 +2916,163 @@ async function shareEntity(btn) {
     btn.classList.remove('copied');
     btn.innerHTML = original;
   }, 1600);
+}
+
+async function shareEntity(btn) {
+  const id   = btn.dataset.shareId;
+  const name = btn.dataset.shareName;
+  const url  = `${location.origin}${location.pathname}#${id}`;
+  await shareUrl(url, name, btn);
+}
+
+// ── Libro degli Incantesimi del player ──────────────────
+// Lista personale di incantesimi preferiti, condivisibile via link senza
+// alcun backend: il link contiene direttamente fonte+slug di ogni incantesimo
+// (vedi encodeBookHash/decodeBookHash), e chi lo apre rifà il fetch dalla
+// stessa API pubblica usata in tutta l'app. Pensata per il telefono del
+// player, a differenza della plancia DM che è solo desktop.
+const SPELLBOOK_KEY = 'nuovo5e:spellbook:v1';
+
+function loadSpellbook() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(SPELLBOOK_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function persistSpellbook() {
+  try { localStorage.setItem(SPELLBOOK_KEY, JSON.stringify(S.spellbook)); } catch {}
+}
+function isInBook(id) { return S.spellbook.some(b => b.id === id); }
+
+function updateSpellbookToggleUi() {
+  const n = S.spellbook.length;
+  D.spellbookToggleCount.textContent = String(n);
+  D.spellbookToggleCount.classList.toggle('hidden', n === 0);
+  D.spellbookCount.textContent = n ? `${n} incantesimi` : '';
+}
+
+function syncBookButtons(id, inBook) {
+  document.querySelectorAll(`[data-book-id="${id}"]`).forEach(btn => {
+    btn.classList.toggle('in-book', inBook);
+    const icon = btn.querySelector('.book-btn-icon');
+    if (icon) icon.textContent = inBook ? '⭐' : '☆';
+    const label = btn.querySelector('.book-btn-label');
+    if (label) label.textContent = inBook ? 'Nel libro' : 'Libro';
+    if (btn.classList.contains('ent-book-btn')) btn.textContent = inBook ? '⭐' : '☆';
+  });
+}
+
+function addToBook(item) {
+  if (!item.id || isInBook(item.id)) return;
+  S.spellbook.push({ id: item.id, slug: item.slug || '', src: item.src || '', name: item.name || '' });
+  persistSpellbook();
+  updateSpellbookToggleUi();
+  syncBookButtons(item.id, true);
+  if (D.app.classList.contains('show-spellbook') && !S.sharedBook) renderSpellbookList();
+}
+
+function removeFromBook(id) {
+  S.spellbook = S.spellbook.filter(b => b.id !== id);
+  persistSpellbook();
+  updateSpellbookToggleUi();
+  syncBookButtons(id, false);
+  if (!S.sharedBook) renderSpellbookList();
+}
+
+function toggleBook(item) {
+  if (isInBook(item.id)) removeFromBook(item.id);
+  else addToBook(item);
+}
+
+// ── Rendering del pannello ───────────────────────────────
+function spellSortKey(ent) {
+  const sum = ent.game?.summary || {};
+  return [sum.isCantrip ? 0 : (sum.level ?? 99), ent.name || ''];
+}
+
+async function renderSpellbookList() {
+  const items = S.sharedBook || S.spellbook;
+  if (!items.length) {
+    D.spellbookList.innerHTML = '<div class="spellbook-empty-msg">Il tuo libro è vuoto.<br>Apri un incantesimo e clicca «☆ Libro» per aggiungerlo qui.</div>';
+    return;
+  }
+  D.spellbookList.innerHTML = '<div class="modal-loading"><div class="spinner"></div></div>';
+
+  const fetched = await Promise.all(items.map(async item => {
+    try { return await tryExactFetch('spell', item.slug, item.src); }
+    catch { return null; }
+  }));
+
+  const rows = items.map((item, i) => ({ item, ent: fetched[i] }))
+    .filter(r => r.ent)
+    .sort((a, b) => {
+      const [ka, na] = spellSortKey(a.ent), [kb, nb] = spellSortKey(b.ent);
+      return ka - kb || na.localeCompare(nb);
+    });
+
+  if (!rows.length) {
+    D.spellbookList.innerHTML = '<div class="spellbook-empty-msg">Nessuno di questi incantesimi è stato trovato.</div>';
+    return;
+  }
+
+  D.spellbookList.innerHTML = rows.map(({ item, ent }) => {
+    const sum = ent.game?.summary || {};
+    const lvl = sum.isCantrip ? 'Cantrip' : (sum.level != null ? `Liv.${sum.level}` : '—');
+    const sch = schoolName(sum.school?.key || sum.school?.label);
+    return `
+      <div class="spellbook-item">
+        <div class="spellbook-item-main" data-id="${esc(ent.id)}">
+          <span class="spellbook-item-lvl">${esc(lvl)}</span>
+          <span class="spellbook-item-name">${esc(ent.name)}</span>
+          <span class="spellbook-item-school">${esc(sch)}</span>
+        </div>
+        ${S.sharedBook ? '' : `<button class="spellbook-item-remove" data-id="${esc(item.id)}" title="Rimuovi">✕</button>`}
+      </div>`;
+  }).join('');
+}
+
+function openSpellbookPanel() {
+  closeSidebarDrawer();
+  D.app.classList.add('show-spellbook');
+  D.spellbookSharedBanner.classList.toggle('hidden', !S.sharedBook);
+  renderSpellbookList();
+}
+function closeSpellbookPanel() {
+  D.app.classList.remove('show-spellbook');
+  S.sharedBook = null;
+}
+function toggleSpellbookPanel() {
+  D.app.classList.contains('show-spellbook') ? closeSpellbookPanel() : openSpellbookPanel();
+}
+
+// ── Condivisione del libro ───────────────────────────────
+// Nessun backend: la lista è codificata direttamente nel link come coppie
+// "fonte:slug" separate da virgola — chi apre il link rifà il fetch di ogni
+// incantesimo dalla stessa API pubblica, senza bisogno di storage server-side.
+function encodeBookHash(items) {
+  return 'book=' + items.map(i => `${i.src || '-'}:${i.slug}`).join(',');
+}
+function decodeBookHash(hash) {
+  return hash.slice('book='.length).split(',').filter(Boolean).map(pair => {
+    const idx = pair.indexOf(':');
+    const src = pair.slice(0, idx);
+    const slug = pair.slice(idx + 1);
+    return { id: `spell:${(src === '-' ? '' : src).toLowerCase()}:${slug}`, slug, src: src === '-' ? '' : src, name: '' };
+  });
+}
+
+async function shareSpellbook(btn) {
+  if (!S.spellbook.length) return;
+  const url = `${location.origin}${location.pathname}#${encodeBookHash(S.spellbook)}`;
+  await shareUrl(url, 'Il mio Libro degli Incantesimi', btn);
+}
+
+function saveSharedBook() {
+  if (!S.sharedBook) return;
+  S.sharedBook.forEach(addToBook);
+  S.sharedBook = null;
+  D.spellbookSharedBanner.classList.add('hidden');
+  renderSpellbookList();
 }
 
 // tag & image click delegation
@@ -2930,10 +3114,35 @@ document.addEventListener('click', e => {
     return;
   }
 
+  // bottone "☆ Libro" (libro degli incantesimi del player) — dettaglio/modal e righe lista
+  const bookBtn = e.target.closest('.book-btn, .ent-book-btn');
+  if (bookBtn) {
+    e.stopPropagation();
+    toggleBook({
+      id:   bookBtn.dataset.bookId,
+      slug: bookBtn.dataset.bookSlug,
+      src:  bookBtn.dataset.bookSrc,
+      name: bookBtn.dataset.bookName,
+    });
+    return;
+  }
+
   // rimuovi una scheda dalla plancia
   const boardRemoveBtn = e.target.closest('.board-card-remove');
   if (boardRemoveBtn) {
     removeFromBoard(boardRemoveBtn.dataset.id);
+    return;
+  }
+
+  // libro degli incantesimi: rimuovi una riga, oppure apri il dettaglio nella modale
+  const sbRemoveBtn = e.target.closest('.spellbook-item-remove');
+  if (sbRemoveBtn) {
+    removeFromBook(sbRemoveBtn.dataset.id);
+    return;
+  }
+  const sbItemMain = e.target.closest('.spellbook-item-main');
+  if (sbItemMain) {
+    modal.loadById(sbItemMain.dataset.id);
     return;
   }
 
@@ -3159,6 +3368,24 @@ async function init() {
     renderBoard();
   });
 
+  // Libro degli Incantesimi: ripristina lo stato da una sessione precedente
+  S.spellbook = loadSpellbook();
+  updateSpellbookToggleUi();
+  D.spellbookToggleBtn.addEventListener('click', toggleSpellbookPanel);
+  D.spellbookCloseBtn.addEventListener('click', closeSpellbookPanel);
+  D.spellbookShareBtn.addEventListener('click', () => shareSpellbook(D.spellbookShareBtn));
+  D.spellbookSaveSharedBtn.addEventListener('click', saveSharedBook);
+  D.spellbookClearBtn.addEventListener('click', () => {
+    if (!S.spellbook.length) return;
+    if (!confirm('Svuotare il tuo Libro degli Incantesimi?')) return;
+    const ids = S.spellbook.map(b => b.id);
+    S.spellbook = [];
+    persistSpellbook();
+    updateSpellbookToggleUi();
+    ids.forEach(id => syncBookButtons(id, false));
+    renderSpellbookList();
+  });
+
   // Stats + reference name cache (skill/sense/action/language tags)
   const [statsResult] = await Promise.allSettled([api.stats(), prefetchTagNames(S.locale)]);
   if (statsResult.status === 'fulfilled') {
@@ -3220,6 +3447,7 @@ async function init() {
   // Entity list click (delegation)
   D.entityList.addEventListener('click', e => {
     if (e.target.closest('.ent-pin-btn')) return; // gestito dal listener globale
+    if (e.target.closest('.ent-book-btn')) return; // gestito dal listener globale
     if (e.target.closest('.book-back')) {
       navigateToBookPicker(S.bookPicker.sectionType);
       return;
@@ -3255,7 +3483,11 @@ async function init() {
 
   // URL hash routing
   const hash = location.hash.slice(1);
-  if (hash) {
+  if (hash.startsWith('book=')) {
+    // link condiviso del libro degli incantesimi: vedi encodeBookHash/decodeBookHash
+    S.sharedBook = decodeBookHash(hash);
+    openSpellbookPanel();
+  } else if (hash) {
     const parts = hash.split(':');
     if (parts.length >= 3) {
       const type = parts[0];

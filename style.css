@@ -159,6 +159,37 @@ body {
 }
 .board-toggle-count.hidden { display: none; }
 
+.spellbook-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 20px);
+  margin: 2px 10px 8px;
+  padding: 7px 10px;
+  background: rgba(157,114,201,.07);
+  border: 1px solid var(--c-border2);
+  border-radius: 5px;
+  color: var(--spell);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .12s;
+}
+.spellbook-toggle-btn:hover { border-color: var(--spell); background: rgba(157,114,201,.13); }
+.spellbook-toggle-icon { font-size: 13px; }
+.spellbook-toggle-label { flex: 1; text-align: left; }
+.spellbook-toggle-count {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--spell);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 6px;
+  min-width: 16px;
+  text-align: center;
+}
+.spellbook-toggle-count.hidden { display: none; }
+
 .sidebar-sec-label {
   padding: 3px 14px 3px;
   font-size: 10px;
@@ -947,6 +978,120 @@ body {
   min-width: 90px;
 }
 
+/* ── Libro degli Incantesimi del player ──────────────── */
+/* Overlay fullscreen a tutte le risoluzioni (non solo desktop come la
+   plancia DM): è pensato apposta per essere usato anche da telefono. */
+.spellbook-panel {
+  display: none;
+  flex-direction: column;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: var(--c-bg);
+}
+#app.show-spellbook .spellbook-panel { display: flex; }
+
+.spellbook-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+.spellbook-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--spell);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.spellbook-header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spellbook-count { font-size: 11px; color: var(--c-text3); }
+
+.spellbook-shared-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(157,114,201,.1);
+  border-bottom: 1px solid var(--c-border);
+  font-size: 12px;
+  color: var(--c-text);
+  flex-shrink: 0;
+}
+.spellbook-shared-banner.hidden { display: none; }
+
+.spellbook-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.spellbook-empty-msg {
+  margin: 40px auto;
+  max-width: 340px;
+  color: var(--c-text3);
+  font-size: 13px;
+  text-align: center;
+}
+.spellbook-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--c-border);
+}
+.spellbook-item-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.spellbook-item-main:hover .spellbook-item-name { color: var(--c-gold2); }
+.spellbook-item-lvl {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--spell);
+  border: 1px solid rgba(157,114,201,.4);
+  background: rgba(157,114,201,.1);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.spellbook-item-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color .1s;
+}
+.spellbook-item-school { flex-shrink: 0; font-size: 11px; color: var(--c-text3); }
+.spellbook-item-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-surf2);
+  border: 1px solid var(--c-border2);
+  border-radius: 50%;
+  color: var(--c-text2);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all .12s;
+}
+.spellbook-item-remove:hover { border-color: #d46060; color: #d46060; }
+
 /* ── Home Screen ─────────────────────────────────────── */
 .home-screen {
   display: flex;
@@ -1601,6 +1746,35 @@ body {
 .ent-pin-btn.pinned { opacity: 1; }
 .ent-pin-btn:hover { border-color: var(--c-gold3); }
 .ent-pin-btn.pinned { border-color: var(--c-gold3); background: rgba(201,171,110,.15); }
+
+/* ── Libro degli Incantesimi del player ──────────────── */
+.book-btn { display: inline-flex; align-items: center; gap: 4px; background: var(--c-surf); border: 1px solid var(--c-border2); border-radius: 4px; color: var(--c-text2); cursor: pointer; font-size: 11px; padding: 3px 9px; transition: all .12s; }
+.book-btn:hover { border-color: var(--spell); color: var(--spell); }
+.book-btn .book-btn-icon { font-size: 13px; }
+.book-btn.in-book { border-color: var(--spell); color: var(--spell); background: rgba(157,114,201,.1); }
+
+/* quick-add sulle righe della lista incantesimi, a sinistra del pin (plancia) */
+.ent-book-btn {
+  position: absolute;
+  top: 5px;
+  right: 30px;
+  width: 21px;
+  height: 21px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-surf2);
+  border: 1px solid var(--c-border2);
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .1s, border-color .1s;
+}
+.ent-item:hover .ent-book-btn,
+.ent-book-btn.in-book { opacity: 1; }
+.ent-book-btn:hover { border-color: var(--spell); }
+.ent-book-btn.in-book { border-color: var(--spell); background: rgba(157,114,201,.15); }
 
 .modal-img-wrap {
   display: flex;

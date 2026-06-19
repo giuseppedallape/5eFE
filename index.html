@@ -43,6 +43,12 @@
         <span id="board-toggle-count" class="board-toggle-count hidden">0</span>
       </button>
 
+      <button id="spellbook-toggle-btn" class="spellbook-toggle-btn" type="button" title="Il mio Libro degli Incantesimi">
+        <span class="spellbook-toggle-icon">📖</span>
+        <span class="spellbook-toggle-label">Il mio Libro</span>
+        <span id="spellbook-toggle-count" class="spellbook-toggle-count hidden">0</span>
+      </button>
+
       <div class="sidebar-sec-label">Compendio</div>
       <ul id="category-list" class="category-list"></ul>
 
@@ -106,6 +112,25 @@
       </div>
       <div id="board-cards" class="board-cards">
         <div class="board-empty-msg">Nessuna entità sulla plancia.<br>Apri una scheda e clicca «📌 Plancia» per aggiungerla qui.</div>
+      </div>
+    </div>
+
+    <div id="spellbook-panel" class="spellbook-panel">
+      <div class="spellbook-header">
+        <h2 class="spellbook-title">Il mio Libro degli Incantesimi</h2>
+        <div class="spellbook-header-right">
+          <span id="spellbook-count" class="spellbook-count"></span>
+          <button id="spellbook-share-btn" class="btn-ghost" type="button">🔗 Condividi</button>
+          <button id="spellbook-clear-btn" class="btn-ghost" type="button">Svuota</button>
+          <button id="spellbook-close-btn" class="icon-btn" type="button" title="Chiudi">✕</button>
+        </div>
+      </div>
+      <div id="spellbook-shared-banner" class="spellbook-shared-banner hidden">
+        <span>📬 Libro condiviso da un altro link — non è ancora salvato nel tuo.</span>
+        <button id="spellbook-save-shared-btn" class="btn-primary" type="button">💾 Aggiungi tutti al mio libro</button>
+      </div>
+      <div id="spellbook-list" class="spellbook-list">
+        <div class="spellbook-empty-msg">Il tuo libro è vuoto.<br>Apri un incantesimo e clicca «☆ Libro» per aggiungerlo qui.</div>
       </div>
     </div>
 
