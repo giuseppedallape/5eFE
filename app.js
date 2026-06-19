@@ -2478,10 +2478,10 @@ async function renderBoardCard(item) {
       try {
         ent = await api.bySlug(item.type, item.slug, item.src || undefined);
       } catch {
-        ent = await api.byId(item.id);
+        ent = await api.byId(item.entId || item.id);
       }
     } else {
-      ent = await api.byId(item.id);
+      ent = await api.byId(item.entId || item.id);
     }
     body.innerHTML = await renderDetail(ent, true);
 
@@ -2548,6 +2548,7 @@ function genBoardId(prefix) {
 function addBoardInstance(entity) {
   const item = {
     id: genBoardId('inst'),
+    entId: entity.id, // vero id dell'entità: serve come fallback se il fetch by-slug fallisce
     type: entity.type,
     slug: entity.slug || '',
     src: entity.src || '',
@@ -2567,6 +2568,7 @@ function duplicateBoardItem(id) {
   if (!original) return;
   const dup = {
     id: genBoardId('dup'),
+    entId: original.entId || original.id,
     type: original.type,
     slug: original.slug,
     src: original.src,
@@ -2792,6 +2794,7 @@ document.addEventListener('click', e => {
   const searchResult = e.target.closest('.board-search-result');
   if (searchResult) {
     addBoardInstance({
+      id:   searchResult.dataset.id,
       type: searchResult.dataset.type,
       slug: searchResult.dataset.slug,
       src:  searchResult.dataset.src,
