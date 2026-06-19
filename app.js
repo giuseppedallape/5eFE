@@ -607,11 +607,25 @@ async function fetchEntityRobust(type, slug, src) {
       { locale: 'en',     q: words.slice(-2).join(' ') },
       { locale: 'en',     q: words.slice(-1).join(' ') },
     ];
+    let variants = null;
     for (const { locale, q } of attempts) {
       if (!q) continue;
       const data = await api.list({ type, q, locale, limit: 10 }).catch(() => null);
-      const hit = data?.results?.find(r => r.slug === slug);
+      const results = data?.results || [];
+      const hit = results.find(r => r.slug === slug);
       if (hit) return await api.byId(hit.id);
+      // Riferimento generico senza variante (es. "Spell Scroll" → esistono solo
+      // "Spell Scroll (1st Level)", "(2nd Level)" ecc.): propone le varianti
+      // invece di un errore secco, se non già trovate in un tentativo precedente.
+      if (!variants) {
+        const prefixed = results.filter(r => r.slug?.startsWith(slug + '-'));
+        if (prefixed.length) variants = prefixed;
+      }
+    }
+    if (variants) {
+      const ambiguous = new Error('Riferimento generico: nessuna entità esatta, solo varianti specifiche.');
+      ambiguous.variants = variants;
+      throw ambiguous;
     }
     throw err;
   }
@@ -2227,6 +2241,16 @@ const modal = {
       const ent = await fetchEntityRobust(type, slug, src);
       this.open(await renderDetail(ent, true));
     } catch (err) {
+      if (err.variants?.length) {
+        this.open(`
+          <div class="modal-error">
+            <p>Riferimento generico: scegli una variante specifica.</p>
+            <div class="entity-suggest-list">
+              ${err.variants.map(v => `<a class="tag-link entity-suggest-item" data-id="${esc(v.id)}" tabindex="0">${esc(v.name)}</a>`).join('')}
+            </div>
+          </div>`);
+        return;
+      }
       this.open(`<div class="modal-error">Entità non trovata: <em>${esc(slug)}</em><br><small style="color:var(--c-text3)">${esc(err.message)}</small></div>`);
     }
   },

@@ -1497,6 +1497,14 @@ body {
   font-size: 13px;
   text-align: center;
 }
+.entity-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  align-items: center;
+}
+.entity-suggest-item { display: inline-block; }
 
 /* condition modal specific */
 .cond-header {
