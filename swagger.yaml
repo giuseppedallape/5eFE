@@ -1,0 +1,1543 @@
+openapi: 3.0.3
+info:
+  title: Nuovo5e API
+  description: |
+    REST API for the Nuovo5e D&D 5e entity database with Italian translation support.
+    Exposes endpoints for listing, filtering, and fetching game entities (spells, monsters,
+    classes, races, items, feats, etc.) as well as a character-builder pipeline.
+  version: 1.0.0
+  contact:
+    name: Giuseppe Dallape
+
+servers:
+  - url: http://localhost:3333/api
+    description: Local development server
+
+tags:
+  - name: health
+    description: Service liveness
+  - name: entities
+    description: Generic entity CRUD and search
+  - name: filters
+    description: Available filter values per entity type
+  - name: classes
+    description: Class progression and builder data
+  - name: races
+    description: Race builder data
+  - name: backgrounds
+    description: Background builder data
+  - name: builds
+    description: Character draft / validation / sheet pipeline
+
+# ─────────────────────────────────────────────────────────────
+# Shared parameters
+# ─────────────────────────────────────────────────────────────
+components:
+  parameters:
+    locale:
+      name: locale
+      in: query
+      description: Content locale (`en` or `it`). Falls back to `en` when content is unavailable.
+      schema:
+        type: string
+        enum: [en, it]
+        default: en
+
+    localeIt:
+      name: locale
+      in: query
+      description: Content locale (`en` or `it`). Defaults to `it` for builder endpoints.
+      schema:
+        type: string
+        enum: [en, it]
+        default: it
+
+    source:
+      name: source
+      in: query
+      description: Filter by source book code (e.g. `PHB`, `XGE`). Case-insensitive.
+      schema:
+        type: string
+        example: PHB
+
+    page:
+      name: page
+      in: query
+      description: 1-based page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    limit:
+      name: limit
+      in: query
+      description: Number of results per page (max 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+
+    q:
+      name: q
+      in: query
+      description: Full-text search term. Matches entity name in all locales.
+      schema:
+        type: string
+        example: fireball
+
+    includeRaw:
+      name: includeRaw
+      in: query
+      description: When `true`, the raw 5e source JSON is included in the response.
+      schema:
+        type: boolean
+        default: false
+
+    level:
+      name: level
+      in: query
+      description: Character level (1-20).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 20
+        default: 1
+
+    subclass:
+      name: subclass
+      in: query
+      description: Subclass slug.
+      schema:
+        type: string
+        example: way-of-the-open-hand
+
+  # ─────────────────────────────────────────────────────────────
+  # Reusable schemas
+  # ─────────────────────────────────────────────────────────────
+  schemas:
+    EntityListItem:
+      type: object
+      description: Compact entity representation used in list responses.
+      properties:
+        id:
+          type: string
+          description: Stable unique entity identifier.
+          example: spell:phb:fireball
+        entityType:
+          type: string
+          description: Entity type key.
+          example: spell
+        source:
+          type: string
+          description: Source book code.
+          example: PHB
+        name:
+          type: string
+          description: Localized entity name.
+          example: Palla di fuoco
+        originalName:
+          type: string
+          description: Original English name.
+          example: Fireball
+        slug:
+          type: string
+          description: URL-safe name slug.
+          example: fireball
+        hasTranslation:
+          type: boolean
+          description: Whether a translation exists for the requested locale.
+        hasItalian:
+          type: boolean
+          description: Whether an Italian translation exists.
+        imageUrl:
+          type: string
+          nullable: true
+          description: Entity image URL if available.
+
+    EntityDetail:
+      allOf:
+        - $ref: '#/components/schemas/EntityListItem'
+        - type: object
+          properties:
+            page:
+              type: integer
+              nullable: true
+              description: Page number in the source book.
+            normalized:
+              type: object
+              nullable: true
+              description: Structured game-data extracted during import (varies by entity type).
+            game:
+              nullable: true
+              oneOf:
+                - $ref: '#/components/schemas/MonsterGameData'
+                - $ref: '#/components/schemas/SpellGameData'
+                - $ref: '#/components/schemas/ItemGameData'
+                - $ref: '#/components/schemas/OptionalFeatureGameData'
+              description: Type-specific game data block.
+            content:
+              type: object
+              properties:
+                localized:
+                  type: object
+                  nullable: true
+                  description: Localized content object (locale requested).
+                english:
+                  type: object
+                  nullable: true
+                  description: English content object.
+            raw5e:
+              type: object
+              nullable: true
+              description: Raw 5e source data. Only present when `includeRaw=true`.
+
+    MonsterGameData:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [monster]
+        summary:
+          type: object
+          properties:
+            cr:
+              type: string
+              nullable: true
+            crNumber:
+              type: number
+              nullable: true
+            sizes:
+              type: array
+              items:
+                type: string
+            type:
+              type: string
+              nullable: true
+            alignment:
+              type: array
+              items:
+                type: string
+            passive:
+              type: integer
+              nullable: true
+        abilities:
+          type: object
+          properties:
+            str: { type: integer, nullable: true }
+            dex: { type: integer, nullable: true }
+            con: { type: integer, nullable: true }
+            int: { type: integer, nullable: true }
+            wis: { type: integer, nullable: true }
+            cha: { type: integer, nullable: true }
+        defenses:
+          type: object
+          properties:
+            ac: { type: integer, nullable: true }
+            hpAverage: { type: integer, nullable: true }
+            hpFormula: { type: string, nullable: true }
+            damageResistances:
+              type: array
+              items: { type: string }
+            damageImmunities:
+              type: array
+              items: { type: string }
+            conditionImmunities:
+              type: array
+              items: { type: string }
+        movement:
+          type: object
+          properties:
+            walk: { type: integer, nullable: true }
+            fly: { type: integer, nullable: true }
+            swim: { type: integer, nullable: true }
+            canFly: { type: boolean }
+            canSwim: { type: boolean }
+        senses:
+          type: object
+          properties:
+            senses:
+              type: array
+              items: { type: string }
+            hasDarkvision: { type: boolean }
+        features:
+          type: object
+          properties:
+            hasSpellcasting: { type: boolean }
+            hasLegendaryActions: { type: boolean }
+            hasMythicActions: { type: boolean }
+        flags:
+          type: object
+          properties:
+            isNpc: { type: boolean }
+            isSwarm: { type: boolean }
+            isNamedCreature: { type: boolean }
+
+    SpellGameData:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [spell]
+        summary:
+          type: object
+          properties:
+            level: { type: integer, nullable: true }
+            isCantrip: { type: boolean }
+            school:
+              type: object
+              properties:
+                key: { type: string, nullable: true }
+                label: { type: string, nullable: true }
+        casting:
+          type: object
+          properties:
+            time:
+              type: array
+              items: { type: string }
+            flags:
+              type: object
+              properties:
+                isAction: { type: boolean }
+                isBonusAction: { type: boolean }
+                isReaction: { type: boolean }
+        range:
+          type: object
+          properties:
+            raw: { type: string, nullable: true }
+            type: { type: string, nullable: true }
+        components:
+          type: object
+          properties:
+            verbal: { type: boolean }
+            somatic: { type: boolean }
+            material: { type: boolean }
+            materialText: { type: string, nullable: true }
+        duration:
+          type: object
+          properties:
+            primary:
+              type: object
+              properties:
+                type: { type: string, nullable: true }
+                unit: { type: string, nullable: true }
+            flags:
+              type: object
+              properties:
+                isInstantaneous: { type: boolean }
+                requiresConcentration: { type: boolean }
+                isRitual: { type: boolean }
+        spellLists:
+          type: object
+          properties:
+            classes:
+              type: array
+              items: { type: string }
+            classSlugs:
+              type: array
+              items: { type: string }
+
+    ItemGameData:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [item]
+        summary:
+          type: object
+          properties:
+            rarity: { type: string, nullable: true }
+            itemType: { type: string, nullable: true }
+            itemTypeGroup: { type: string, nullable: true }
+        usage:
+          type: object
+          properties:
+            requiresAttunement: { type: boolean }
+            weight: { type: number, nullable: true }
+            value: { type: number, nullable: true }
+        combat:
+          type: object
+          properties:
+            ac: { type: integer, nullable: true }
+            damage1: { type: string, nullable: true }
+            damageType: { type: string, nullable: true }
+            properties:
+              type: array
+              items: { type: string }
+        flags:
+          type: object
+          properties:
+            isMagic: { type: boolean }
+            isWeapon: { type: boolean }
+            isArmor: { type: boolean }
+            isConsumable: { type: boolean }
+
+    OptionalFeatureGameData:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [optionalFeature]
+        summary:
+          type: object
+          properties:
+            featureTypes:
+              type: array
+              items: { type: string }
+            featureTypeLabels:
+              type: array
+              items: { type: string }
+        prerequisites:
+          type: object
+          properties:
+            types:
+              type: array
+              items: { type: string }
+            classes:
+              type: array
+              items: { type: string }
+            levels:
+              type: array
+              items: { type: integer }
+            flags:
+              type: object
+              properties:
+                hasPrerequisite: { type: boolean }
+
+    PaginatedEntityList:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        filters:
+          type: object
+          description: Echo of the query parameters used.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/EntityListItem'
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: ENTITY_NOT_FOUND
+        message:
+          type: string
+          description: Human-readable error description.
+          example: Entity not found
+
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          description: Whether the build is valid.
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              choiceId:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+
+    BuildPayload:
+      type: object
+      description: Character build payload shared by validate and sheet endpoints.
+      required:
+        - race
+        - class
+        - level
+      properties:
+        race:
+          type: string
+          description: Race slug.
+          example: human
+        raceSource:
+          type: string
+          description: Race source book code.
+          example: PHB
+        class:
+          type: string
+          description: Class slug.
+          example: fighter
+        classSource:
+          type: string
+          example: PHB
+        subclass:
+          type: string
+          nullable: true
+          example: champion
+        background:
+          type: string
+          nullable: true
+          example: soldier
+        backgroundSource:
+          type: string
+          nullable: true
+          example: PHB
+        level:
+          type: integer
+          minimum: 1
+          maximum: 20
+          example: 5
+        locale:
+          type: string
+          enum: [en, it]
+          default: it
+        abilityScores:
+          type: object
+          description: Six ability scores keyed by abbreviation.
+          properties:
+            str: { type: integer }
+            dex: { type: integer }
+            con: { type: integer }
+            int: { type: integer }
+            wis: { type: integer }
+            cha: { type: integer }
+        choices:
+          type: array
+          description: Resolved choice values from the choice manifest.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: Choice ID from the choice manifest.
+              values:
+                type: array
+                items:
+                  type: string
+
+# ─────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────
+paths:
+
+  # ── Health ────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [health]
+      summary: Service health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  service:
+                    type: string
+                    example: nuovo5e-api
+
+  # ── Stats ─────────────────────────────────────────────────
+  /stats:
+    get:
+      tags: [entities]
+      summary: Entity counts by type
+      operationId: getStats
+      description: Returns total entity count, translated entity count, and breakdowns per entity type.
+      responses:
+        '200':
+          description: Counts returned successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    example: 42500
+                  translated:
+                    type: integer
+                    example: 38000
+                  byType:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                    example:
+                      spell: 500
+                      monster: 3000
+                  translatedByType:
+                    type: object
+                    additionalProperties:
+                      type: integer
+        '500':
+          description: Database error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: STATS_ERROR
+                message: Unable to load stats
+
+  # ── Entity list ───────────────────────────────────────────
+  /entities:
+    get:
+      tags: [entities]
+      summary: List entities with pagination and filtering
+      operationId: listEntities
+      parameters:
+        - name: type
+          in: query
+          description: Entity type to filter by (e.g. `spell`, `monster`, `class`).
+          schema:
+            type: string
+            example: spell
+        - $ref: '#/components/parameters/source'
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/locale'
+        - $ref: '#/components/parameters/q'
+        # spell filters
+        - name: level
+          in: query
+          description: (spell) Spell level (0 = cantrip).
+          schema: { type: integer, minimum: 0, maximum: 9 }
+        - name: levelMin
+          in: query
+          description: (spell) Minimum spell level.
+          schema: { type: integer }
+        - name: levelMax
+          in: query
+          description: (spell) Maximum spell level.
+          schema: { type: integer }
+        - name: school
+          in: query
+          description: (spell) School of magic (`A`,`C`,`D`,`E`,`I`,`N`,`T`,`V` or full name).
+          schema: { type: string, example: evocation }
+        - name: class
+          in: query
+          description: (spell / class / subclass / feature) Class slug.
+          schema: { type: string, example: wizard }
+        - name: isCantrip
+          in: query
+          schema: { type: boolean }
+        - name: requiresConcentration
+          in: query
+          schema: { type: boolean }
+        - name: isRitual
+          in: query
+          schema: { type: boolean }
+        - name: hasVerbal
+          in: query
+          schema: { type: boolean }
+        - name: hasSomatic
+          in: query
+          schema: { type: boolean }
+        - name: hasMaterial
+          in: query
+          schema: { type: boolean }
+        - name: isSrd
+          in: query
+          schema: { type: boolean }
+        # monster filters
+        - name: cr
+          in: query
+          description: (monster) Exact challenge rating (e.g. `1/2`, `5`, `Unknown`).
+          schema: { type: string }
+        - name: crMin
+          in: query
+          description: (monster) Minimum numeric CR.
+          schema: { type: number }
+        - name: crMax
+          in: query
+          description: (monster) Maximum numeric CR.
+          schema: { type: number }
+        - name: monsterType
+          in: query
+          description: (monster) Creature type (e.g. `undead`, `dragon`).
+          schema: { type: string }
+        - name: size
+          in: query
+          description: (monster / race) Size code (`T`,`S`,`M`,`L`,`H`,`G`).
+          schema: { type: string, example: M }
+        - name: environment
+          in: query
+          description: (monster) Habitat environment.
+          schema: { type: string }
+        - name: hasSpellcasting
+          in: query
+          schema: { type: boolean }
+        - name: hasLegendaryActions
+          in: query
+          schema: { type: boolean }
+        - name: isSwarm
+          in: query
+          schema: { type: boolean }
+        # item filters
+        - name: rarity
+          in: query
+          description: (item) Magic rarity (e.g. `common`, `rare`, `legendary`).
+          schema: { type: string }
+        - name: itemType
+          in: query
+          description: (item) Item type label.
+          schema: { type: string }
+        - name: itemTypeGroup
+          in: query
+          description: (item) Item type group key.
+          schema: { type: string }
+        - name: requiresAttunement
+          in: query
+          schema: { type: boolean }
+        - name: isMagic
+          in: query
+          schema: { type: boolean }
+        - name: isWeapon
+          in: query
+          schema: { type: boolean }
+        - name: isArmor
+          in: query
+          schema: { type: boolean }
+        # race / background filters
+        - name: creatureType
+          in: query
+          description: (race) Creature type.
+          schema: { type: string }
+        - name: language
+          in: query
+          description: (race / background) Language proficiency.
+          schema: { type: string }
+        - name: skill
+          in: query
+          description: Skill proficiency or choice.
+          schema: { type: string }
+        - name: hasDarkvision
+          in: query
+          schema: { type: boolean }
+        # subclass filters
+        - name: featureLevel
+          in: query
+          description: (subclass) Feature level.
+          schema: { type: integer }
+        - name: firstFeatureLevel
+          in: query
+          description: (subclass) Level of the first subclass feature.
+          schema: { type: integer }
+        # optional feature filters
+        - name: featureType
+          in: query
+          description: (optionalFeature) Feature type key.
+          schema: { type: string }
+        - name: prerequisiteLevel
+          in: query
+          description: (optionalFeature / feat) Required character level.
+          schema: { type: integer }
+        - name: prerequisiteClass
+          in: query
+          description: (optionalFeature) Required class slug.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated entity list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedEntityList'
+              example:
+                page: 1
+                limit: 50
+                total: 512
+                totalPages: 11
+                filters:
+                  type: spell
+                  locale: it
+                  q: null
+                results:
+                  - id: spell:phb:fireball
+                    entityType: spell
+                    source: PHB
+                    name: Palla di fuoco
+                    originalName: Fireball
+                    slug: fireball
+                    hasTranslation: true
+                    hasItalian: true
+                    imageUrl: null
+        '500':
+          description: Database error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: ENTITIES_ERROR
+                message: Unable to load entities
+
+  # ── Entity by stable ID (canonical) ───────────────────────
+  /entities/by-id/{id}:
+    get:
+      tags: [entities]
+      summary: Get entity by stable ID
+      operationId: getEntityById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: spell:phb:fireball
+        - $ref: '#/components/parameters/locale'
+        - $ref: '#/components/parameters/includeRaw'
+      responses:
+        '200':
+          description: Entity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDetail'
+        '404':
+          description: Entity not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: ENTITY_NOT_FOUND
+                message: "Entity not found: spell:phb:fireball"
+        '500':
+          description: Database error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Entity by type + slug ─────────────────────────────────
+  /entities/by-slug/{entityType}/{slug}:
+    get:
+      tags: [entities]
+      summary: Get entity by type and slug
+      operationId: getEntityBySlug
+      description: |
+        Returns a single entity matched by `entityType` and `slug`.
+        When multiple sources publish an entity with the same slug, pass `?source=CODE`
+        to disambiguate; otherwise `409 AMBIGUOUS_SLUG` is returned.
+      parameters:
+        - name: entityType
+          in: path
+          required: true
+          schema:
+            type: string
+          example: spell
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: fireball
+        - $ref: '#/components/parameters/source'
+        - $ref: '#/components/parameters/locale'
+        - $ref: '#/components/parameters/includeRaw'
+      responses:
+        '200':
+          description: Entity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDetail'
+        '400':
+          description: Invalid entity type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_ENTITY_TYPE
+                message: "Invalid entity type: unknowntype"
+        '404':
+          description: No entity found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: ENTITY_NOT_FOUND
+                message: "Entity not found: spell/fireball"
+        '409':
+          description: Slug is ambiguous — multiple sources match.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: AMBIGUOUS_SLUG
+                  message:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntityListItem'
+        '500':
+          description: Database error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Entity by ID (legacy) ─────────────────────────────────
+  /entities/{id}:
+    get:
+      tags: [entities]
+      summary: Get entity by ID (legacy)
+      operationId: getEntityByIdLegacy
+      deprecated: true
+      description: Legacy alias for `GET /entities/by-id/{id}`. Prefer the canonical route.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: spell:phb:fireball
+        - $ref: '#/components/parameters/locale'
+        - $ref: '#/components/parameters/includeRaw'
+      responses:
+        '200':
+          description: Entity detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityDetail'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Filters ───────────────────────────────────────────────
+  /filters/{entityType}:
+    get:
+      tags: [filters]
+      summary: Available filter values for an entity type
+      operationId: getFilters
+      description: |
+        Returns the distinct values that can be used as filter parameters for `GET /entities?type={entityType}`.
+        The response shape varies significantly per entity type.
+
+        **Per-type extras:**
+        - `spell` → levels, schools, classes
+        - `monster` → CRs, sizes, types, environments, damage types, condition immunities
+        - `item` → rarities, item types, weapon categories, properties
+        - `race` → sizes, creature types, languages, proficiencies, resistances
+        - `class` → hit dice, saves, spellcasting abilities, caster progressions
+        - `subclass` → parent classes, feature levels
+        - `classFeature` / `subclassFeature` → parent class/subclass, levels
+        - `optionalFeature` → feature types, prerequisite classes/spells/items/levels
+        - `feat` → abilities, prerequisites, proficiencies
+        - `background` → skills, tools, languages
+      parameters:
+        - name: entityType
+          in: path
+          required: true
+          schema:
+            type: string
+          example: spell
+      responses:
+        '200':
+          description: Available filter values.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entityType:
+                    type: string
+                  sources:
+                    type: array
+                    items: { type: string }
+                additionalProperties: true
+              examples:
+                spell:
+                  summary: Spell filters
+                  value:
+                    entityType: spell
+                    sources: [PHB, XGE, SCAG]
+                    levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+                    schools: [A, C, D, E, I, N, T, V]
+                    classes: [wizard, cleric, druid]
+                    classKeys: [wizard, cleric, druid]
+                monster:
+                  summary: Monster filters
+                  value:
+                    entityType: monster
+                    sources: [MM, VGM, MTF]
+                    crs: ["0", "1/8", "1/4", "1/2", "1", "2", "30"]
+                    sizes: [T, S, M, L, H, G]
+                    monsterTypes: [beast, undead, dragon]
+                    environments: [arctic, forest, underdark]
+        '500':
+          description: Database error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: FILTERS_ERROR
+                message: Unable to load filters
+
+  # ── Class detail ──────────────────────────────────────────
+  /classes/{slug}:
+    get:
+      tags: [classes]
+      summary: Class detail with progression and timeline
+      operationId: getClass
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: wizard
+        - $ref: '#/components/parameters/localeIt'
+        - $ref: '#/components/parameters/includeRaw'
+        - name: includeTimeline
+          in: query
+          description: Set to `false` to skip the timeline computation.
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Class data with progression and optional timeline.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  class:
+                    $ref: '#/components/schemas/EntityDetail'
+                  progression:
+                    type: object
+                    description: Level-by-level feature table.
+                  optionalFeatures:
+                    type: object
+                    description: Optional feature progressions available to the class.
+                  timeline:
+                    type: object
+                    nullable: true
+                    description: Chronological feature timeline (null when `includeTimeline=false`).
+        '404':
+          description: Class not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: CLASS_NOT_FOUND
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Class builder ─────────────────────────────────────────
+  /classes/{slug}/builder:
+    get:
+      tags: [classes]
+      summary: Class builder data for a given level
+      operationId: getClassBuilder
+      description: |
+        Returns spellcasting slots, available spell list, skill/equipment choices, optional
+        feature progressions, and a consolidated summary for the requested level.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: wizard
+        - $ref: '#/components/parameters/localeIt'
+        - $ref: '#/components/parameters/level'
+        - $ref: '#/components/parameters/subclass'
+      responses:
+        '200':
+          description: Class builder snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  class:
+                    $ref: '#/components/schemas/EntityListItem'
+                  builder:
+                    type: object
+                    properties:
+                      subclass:
+                        nullable: true
+                        type: object
+                      features:
+                        type: array
+                        items:
+                          type: object
+                      spellcasting:
+                        type: object
+                        nullable: true
+                        properties:
+                          canCastSpells:
+                            type: boolean
+                          maxSpellLevel:
+                            type: integer
+                            nullable: true
+                          cantripsKnown:
+                            type: integer
+                            nullable: true
+                          spellsKnown:
+                            type: integer
+                            nullable: true
+                      loadout:
+                        type: object
+                        description: Skill/tool/equipment proficiency options.
+                      summary:
+                        type: object
+                        description: Aggregated summary flags.
+        '404':
+          description: Class not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Race builder ──────────────────────────────────────────
+  /races/{slug}/builder:
+    get:
+      tags: [races]
+      summary: Race builder data
+      operationId: getRaceBuilder
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: human
+        - $ref: '#/components/parameters/source'
+        - $ref: '#/components/parameters/localeIt'
+      responses:
+        '200':
+          description: Race builder data including ability scores, traits and proficiency choices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  race:
+                    $ref: '#/components/schemas/EntityListItem'
+                  ability:
+                    type: object
+                    description: Ability score bonuses and choices.
+                  traits:
+                    type: array
+                    items: { type: object }
+                  proficiencies:
+                    type: object
+                    description: Skill / tool / language proficiency groups.
+                  summary:
+                    type: object
+        '404':
+          description: Race not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: RACE_NOT_FOUND
+        '409':
+          description: Ambiguous slug — multiple sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: RACE_AMBIGUOUS }
+                  message: { type: string }
+                  candidates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntityListItem'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Background builder ────────────────────────────────────
+  /backgrounds/{slug}/builder:
+    get:
+      tags: [backgrounds]
+      summary: Background builder data
+      operationId: getBackgroundBuilder
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: soldier
+        - $ref: '#/components/parameters/source'
+        - $ref: '#/components/parameters/localeIt'
+      responses:
+        '200':
+          description: Background builder data including feature, proficiencies and equipment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  background:
+                    $ref: '#/components/schemas/EntityListItem'
+                  feature:
+                    type: object
+                    nullable: true
+                  proficiencies:
+                    type: object
+                  startingEquipment:
+                    type: object
+                    nullable: true
+                  summary:
+                    type: object
+        '404':
+          description: Background not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: BACKGROUND_NOT_FOUND
+        '409':
+          description: Ambiguous slug.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  message: { type: string }
+                  candidates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntityListItem'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Character draft ───────────────────────────────────────
+  /builds/draft:
+    get:
+      tags: [builds]
+      summary: Build a character draft
+      operationId: getCharacterDraft
+      description: |
+        Combines race, class, optional subclass, and optional background into a complete
+        character draft. Returns the full choice manifest (proficiency / equipment / spell
+        selections), spell choice manifest, ability score manifest, and detailed builder
+        snapshots for each component.
+
+        **Required:** `?race=SLUG` and `?class=SLUG`.
+      parameters:
+        - name: race
+          in: query
+          required: true
+          schema:
+            type: string
+          example: human
+        - name: raceSource
+          in: query
+          schema:
+            type: string
+          example: PHB
+        - name: class
+          in: query
+          required: true
+          schema:
+            type: string
+          example: fighter
+        - name: classSource
+          in: query
+          schema:
+            type: string
+        - name: subclass
+          in: query
+          schema:
+            type: string
+          example: champion
+        - name: background
+          in: query
+          schema:
+            type: string
+          example: soldier
+        - name: backgroundSource
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/level'
+        - $ref: '#/components/parameters/localeIt'
+      responses:
+        '200':
+          description: Complete character draft.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  draft:
+                    type: object
+                    properties:
+                      level:
+                        type: integer
+                      locale:
+                        type: string
+                      race:
+                        type: object
+                      class:
+                        type: object
+                      subclass:
+                        nullable: true
+                        type: object
+                      background:
+                        nullable: true
+                        type: object
+                      summary:
+                        type: object
+                      choiceManifestSummary:
+                        type: object
+                      spellChoiceManifestSummary:
+                        type: object
+                      abilityScoreManifestSummary:
+                        type: object
+                  choiceManifest:
+                    type: object
+                    properties:
+                      choices:
+                        type: array
+                        items:
+                          type: object
+                      summary:
+                        type: object
+                  spellChoiceManifest:
+                    type: object
+                  abilityScoreManifest:
+                    type: object
+                  raceBuilder:
+                    type: object
+                  classBuilder:
+                    type: object
+                  backgroundBuilder:
+                    nullable: true
+                    type: object
+        '400':
+          description: Missing required parameter (`race` or `class`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingRace:
+                  value:
+                    error: RACE_REQUIRED
+                    message: Pass ?race=SLUG.
+                missingClass:
+                  value:
+                    error: CLASS_REQUIRED
+                    message: Pass ?class=SLUG.
+        '404':
+          description: Race, class, subclass or background not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: RACE_NOT_FOUND
+        '409':
+          description: Ambiguous slug — pass the relevant `?source=` parameter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Build validate ────────────────────────────────────────
+  /builds/validate:
+    post:
+      tags: [builds]
+      summary: Validate a character build
+      operationId: validateCharacterBuild
+      description: |
+        Validates a fully resolved character build payload (ability scores + all choices).
+        Returns HTTP 200 when valid, HTTP 422 when validation errors are present.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildPayload'
+            example:
+              race: human
+              class: fighter
+              level: 3
+              subclass: champion
+              background: soldier
+              locale: it
+              abilityScores:
+                str: 16
+                dex: 12
+                con: 14
+                int: 10
+                wis: 13
+                cha: 8
+              choices:
+                - id: class.skills.0
+                  values: [athletics]
+                - id: class.skills.1
+                  values: [perception]
+      responses:
+        '200':
+          description: Build is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+              example:
+                valid: true
+                errors: []
+        '422':
+          description: Build has validation errors.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+              example:
+                valid: false
+                errors:
+                  - choiceId: class.skills.0
+                    code: INVALID_CHOICE
+                    message: athletics is not available for this class
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Build sheet ───────────────────────────────────────────
+  /builds/sheet:
+    post:
+      tags: [builds]
+      summary: Generate a character sheet
+      operationId: buildCharacterSheet
+      description: |
+        Takes a fully resolved build payload and returns a computed character sheet with
+        derived statistics, combat stats, weapon attacks, spell actions and resource state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildPayload'
+      responses:
+        '200':
+          description: Computed character sheet.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Full character sheet (structure varies by class/race configuration).
+                properties:
+                  character:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        nullable: true
+                      level:
+                        type: integer
+                      race:
+                        type: object
+                      class:
+                        type: object
+                      background:
+                        nullable: true
+                        type: object
+                  abilityScores:
+                    type: object
+                    properties:
+                      str: { type: integer }
+                      dex: { type: integer }
+                      con: { type: integer }
+                      int: { type: integer }
+                      wis: { type: integer }
+                      cha: { type: integer }
+                  derived:
+                    type: object
+                    description: Derived stats (AC, HP, initiative, proficiency bonus…).
+                  combat:
+                    type: object
+                    description: Combat stats and attack actions.
+                  spells:
+                    type: object
+                    nullable: true
+                    description: Prepared/known spells and spell slot state.
+                  resources:
+                    type: object
+                    description: Class resource state (rage charges, ki points…).
+        '404':
+          description: Race, class or background not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error in the payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

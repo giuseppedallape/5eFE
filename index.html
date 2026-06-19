@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nuovo5e — D&D 5e Reference</title>
+  <meta name="theme-color" content="#111115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Nuovo5e">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+
+    <button id="mobile-menu-btn" class="mobile-menu-btn" aria-label="Apri menu" title="Menu">☰</button>
+    <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+    <nav id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="logo-icon">⚔</span>
+          <span class="logo-text">Nuovo5e</span>
+        </div>
+        <button id="sidebar-close-btn" class="sidebar-close-btn" aria-label="Chiudi menu">✕</button>
+      </div>
+
+      <div class="sidebar-search-wrap">
+        <input id="sidebar-search" type="text" placeholder="Cerca tutto…" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div class="locale-row">
+        <button class="locale-btn active" data-locale="it">🇮🇹 IT</button>
+        <button class="locale-btn" data-locale="en">🇬🇧 EN</button>
+      </div>
+
+      <button id="board-toggle-btn" class="board-toggle-btn" type="button" title="Plancia DM: tieni più schede aperte una a fianco all'altra">
+        <span class="board-toggle-icon">🗂</span>
+        <span class="board-toggle-label">Plancia DM</span>
+        <span id="board-toggle-count" class="board-toggle-count hidden">0</span>
+      </button>
+
+      <div class="sidebar-sec-label">Compendio</div>
+      <ul id="category-list" class="category-list"></ul>
+
+      <div class="sidebar-footer-wrap">
+        <div class="sidebar-footer" id="sidebar-footer"></div>
+        <button id="sidebar-install-btn" class="btn-ghost install-btn hidden" type="button">Installa app</button>
+      </div>
+    </nav>
+
+    <div id="list-panel" class="list-panel">
+      <div class="list-header">
+        <button id="mobile-menu-btn-list" class="mobile-menu-btn-inline icon-btn" aria-label="Apri menu" title="Menu">☰</button>
+        <h2 id="list-title" class="list-title">—</h2>
+        <div class="list-header-right">
+          <span id="list-count" class="list-count"></span>
+          <button id="filter-btn" class="icon-btn" title="Filtri" style="display:none">⚙</button>
+        </div>
+      </div>
+
+      <div class="list-search-wrap">
+        <input id="list-search" type="text" placeholder="Filtra nella lista… ( / )" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div id="entity-list" class="entity-list">
+        <div class="placeholder-msg">Seleziona una categoria dalla sidebar</div>
+      </div>
+
+      <div id="pagination" class="pagination"></div>
+    </div>
+
+    <div id="detail-panel" class="detail-panel">
+      <div id="detail-content" class="detail-content">
+        <div class="home-screen">
+        <div class="home-icon">⚔</div>
+        <h1>Nuovo5e</h1>
+        <p class="home-sub">D&amp;D 5e Reference con traduzioni in italiano</p>
+        <div class="pwa-cta hidden" id="home-install-cta">
+          <button id="home-install-btn" class="btn-primary" type="button">Installa come app</button>
+        </div>
+        <div id="home-stats" class="home-stats-grid"></div>
+      </div>
+      </div>
+    </div>
+
+    <div id="board-panel" class="board-panel">
+      <div class="board-header">
+        <h2 class="board-title">Plancia DM</h2>
+        <div class="board-header-right">
+          <span id="board-count" class="board-count"></span>
+          <button id="board-init-btn" class="btn-ghost" type="button" title="Tira l'iniziativa per ogni mostro (d20 + Destrezza) e ordina la plancia">🎲 Iniziativa</button>
+          <button id="board-hp-btn" class="btn-ghost" type="button" title="Tira i Punti Ferita per tutti i mostri che non li hanno ancora tirati">❤️ Vita mostri</button>
+          <button id="board-add-pg-btn" class="btn-ghost" type="button" title="Aggiungi un segnalibro (es. un PG) da ordinare insieme ai mostri">🔖 + PG</button>
+          <button id="board-clear-btn" class="btn-ghost" type="button">Svuota</button>
+          <button id="board-focus-btn" class="icon-btn" type="button" title="Schermo intero: nascondi le barre laterali">⛶</button>
+          <button id="board-close-btn" class="icon-btn" type="button" title="Chiudi plancia">✕</button>
+        </div>
+      </div>
+      <div id="board-cards" class="board-cards">
+        <div class="board-empty-msg">Nessuna entità sulla plancia.<br>Apri una scheda e clicca «📌 Plancia» per aggiungerla qui.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Filters dialog -->
+  <div id="filters-panel" class="filters-panel">
+    <div id="filters-panel-bg" class="modal-bg"></div>
+    <div class="filters-panel-card">
+      <div class="filters-panel-header">
+        <h3>Filtri</h3>
+        <button id="filters-panel-close" class="icon-btn" title="Chiudi">✕</button>
+      </div>
+      <div id="filters-body" class="filters-body"></div>
+      <div class="filter-actions">
+        <button id="apply-filters-btn" class="btn-primary">Applica</button>
+        <button id="clear-filters-btn" class="btn-ghost">Cancella tutto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="modal-wrap hidden">
+    <div id="modal-bg"   class="modal-bg"></div>
+    <div id="modal-card" class="modal-card">
+      <button id="modal-close" class="modal-x" title="Chiudi">✕</button>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
