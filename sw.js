@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'nuovo5e-v1';
+const CACHE_VERSION = 'nuovo5e-v2';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -50,24 +50,19 @@ self.addEventListener('fetch', event => {
 
   const isStaticAsset = /\.(?:css|js|svg|png|jpg|jpeg|webp|woff2?)$/i.test(url.pathname) || url.pathname.endsWith('.webmanifest');
 
+  // network-first: l'app è in sviluppo attivo con deploy frequenti, quindi
+  // serve sempre la versione più recente quando si è online — la cache
+  // serve solo da fallback offline, non da prima risposta "stantia".
   if (isStaticAsset) {
     event.respondWith((async () => {
-      const cached = await caches.match(req);
-      if (cached) {
-        event.waitUntil((async () => {
-          try {
-            const fresh = await fetch(req);
-            const cache = await caches.open(CACHE_VERSION);
-            await cache.put(req, fresh.clone());
-          } catch {}
-        })());
-        return cached;
+      try {
+        const fresh = await fetch(req);
+        const cache = await caches.open(CACHE_VERSION);
+        cache.put(req, fresh.clone());
+        return fresh;
+      } catch {
+        return (await caches.match(req)) || Response.error();
       }
-
-      const fresh = await fetch(req);
-      const cache = await caches.open(CACHE_VERSION);
-      cache.put(req, fresh.clone());
-      return fresh;
     })());
   }
 });
