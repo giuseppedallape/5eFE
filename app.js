@@ -593,7 +593,7 @@ const api = {
 // localizzato può differire da quello dello slug (es. "Strahd's Animated
 // Armor" → "Armatura Animata di Strahd"). Il match valido è sempre quello
 // con lo slug esatto tra i risultati, non il primo della lista.
-async function fetchEntityRobust(type, slug, src) {
+async function tryFetchEntity(type, slug, src) {
   try {
     return await api.bySlug(type, slug, src || undefined);
   } catch (err) {
@@ -626,6 +626,26 @@ async function fetchEntityRobust(type, slug, src) {
       const ambiguous = new Error('Riferimento generico: nessuna entità esatta, solo varianti specifiche.');
       ambiguous.variants = variants;
       throw ambiguous;
+    }
+    throw err;
+  }
+}
+
+// Alcuni link "{@item ...}" nel testo puntano in realtà a equipaggiamento di
+// base (es. "Leather Armor"), indicizzato sotto l'entityType "itemBase" e non
+// "item" — categoria che l'app non espone ancora nella sidebar, quindi questi
+// link sono l'unico modo per raggiungerla. Se il tipo richiesto fallisce del
+// tutto (nessuna corrispondenza esatta né varianti), si ritenta col tipo
+// alternativo prima di arrendersi.
+const ALT_ENTITY_TYPE = { item: 'itemBase' };
+
+async function fetchEntityRobust(type, slug, src) {
+  try {
+    return await tryFetchEntity(type, slug, src);
+  } catch (err) {
+    const altType = ALT_ENTITY_TYPE[type];
+    if (!err.variants && altType) {
+      try { return await tryFetchEntity(altType, slug, src); } catch { /* lancia l'errore originale */ }
     }
     throw err;
   }
