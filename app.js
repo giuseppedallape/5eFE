@@ -585,68 +585,79 @@ const api = {
 // inaffidabile per le stesse fonti) e talvolta 409 con dei candidati
 // suggeriti. Usato per i link a entità dentro al testo ({@creature ...}
 // ecc.), dove abbiamo solo slug+source e non un id reale da cui ripartire.
-//
-// Come ultima spiaggia si prova una ricerca testuale per nome derivato dallo
-// slug, ignorando il filtro "source": si tenta la frase intera nella lingua
-// corrente, poi in inglese (lo slug deriva sempre dal nome originale inglese),
-// poi solo le ultime due/una parola, perché l'ordine delle parole nel nome
-// localizzato può differire da quello dello slug (es. "Strahd's Animated
-// Armor" → "Armatura Animata di Strahd"). Il match valido è sempre quello
-// con lo slug esatto tra i risultati, non il primo della lista.
-async function tryFetchEntity(type, slug, src) {
+async function tryExactFetch(type, slug, src) {
   try {
     return await api.bySlug(type, slug, src || undefined);
   } catch (err) {
     if (err.status === 409 && err.data?.results?.length) {
       return await api.byId(err.data.results[0].id);
     }
-    const words = slug.split('-').filter(Boolean);
-    const attempts = [
-      { locale: S.locale, q: words.join(' ') },
-      { locale: 'en',     q: words.join(' ') },
-      { locale: 'en',     q: words.slice(-2).join(' ') },
-      { locale: 'en',     q: words.slice(-1).join(' ') },
-    ];
-    let variants = null;
-    for (const { locale, q } of attempts) {
-      if (!q) continue;
-      const data = await api.list({ type, q, locale, limit: 10 }).catch(() => null);
-      const results = data?.results || [];
-      const hit = results.find(r => r.slug === slug);
-      if (hit) return await api.byId(hit.id);
-      // Riferimento generico senza variante (es. "Spell Scroll" → esistono solo
-      // "Spell Scroll (1st Level)", "(2nd Level)" ecc.): propone le varianti
-      // invece di un errore secco, se non già trovate in un tentativo precedente.
-      if (!variants) {
-        const prefixed = results.filter(r => r.slug?.startsWith(slug + '-'));
-        if (prefixed.length) variants = prefixed;
-      }
-    }
-    if (variants) {
-      const ambiguous = new Error('Riferimento generico: nessuna entità esatta, solo varianti specifiche.');
-      ambiguous.variants = variants;
-      throw ambiguous;
-    }
     throw err;
   }
 }
 
 // Alcuni link "{@item ...}" nel testo puntano in realtà a equipaggiamento di
-// base (es. "Leather Armor"), indicizzato sotto l'entityType "itemBase" e non
-// "item" — categoria che l'app non espone ancora nella sidebar, quindi questi
-// link sono l'unico modo per raggiungerla. Se il tipo richiesto fallisce del
-// tutto (nessuna corrispondenza esatta né varianti), si ritenta col tipo
-// alternativo prima di arrendersi.
+// base (es. "Leather Armor", "Scimitar", "Shield"), indicizzato sotto
+// l'entityType "itemBase" e non "item" (oggetti magici/specifici) — categoria
+// che l'app non espone ancora nella sidebar, quindi questi link sono l'unico
+// modo per raggiungerla. Va provato con una corrispondenza ESATTA prima di
+// arrivare alla ricerca testuale fuzzy sotto: altrimenti un'arma base come
+// "Shield" può trovare per coincidenza un oggetto magico omonimo (es.
+// "Shield Guardian Amulet", slug "shield-guardian-amulet") nella ricerca sul
+// tipo "item" e venire scambiata per quello, mostrando l'oggetto sbagliato.
 const ALT_ENTITY_TYPE = { item: 'itemBase' };
+
+// Ultima spiaggia: ricerca testuale per nome derivato dallo slug, ignorando
+// il filtro "source" (inaffidabile per alcune fonti). Si tenta la frase
+// intera nella lingua corrente, poi in inglese (lo slug deriva sempre dal
+// nome originale inglese), poi solo le ultime due/una parola, perché
+// l'ordine delle parole nel nome localizzato può differire da quello dello
+// slug (es. "Strahd's Animated Armor" → "Armatura Animata di Strahd").
+// Il match valido è sempre quello con lo slug esatto tra i risultati, non il
+// primo della lista.
+async function tryFuzzyFetch(type, slug) {
+  const words = slug.split('-').filter(Boolean);
+  const attempts = [
+    { locale: S.locale, q: words.join(' ') },
+    { locale: 'en',     q: words.join(' ') },
+    { locale: 'en',     q: words.slice(-2).join(' ') },
+    { locale: 'en',     q: words.slice(-1).join(' ') },
+  ];
+  let variants = null;
+  for (const { locale, q } of attempts) {
+    if (!q) continue;
+    const data = await api.list({ type, q, locale, limit: 10 }).catch(() => null);
+    const results = data?.results || [];
+    const hit = results.find(r => r.slug === slug);
+    if (hit) return await api.byId(hit.id);
+    // Riferimento generico senza variante (es. "Spell Scroll" → esistono solo
+    // "Spell Scroll (1st Level)", "(2nd Level)" ecc.): propone le varianti
+    // invece di un errore secco. Richiede almeno 2 corrispondenze: un singolo
+    // match è quasi sempre un oggetto omonimo per coincidenza, non una vera
+    // famiglia di varianti (es. "Scimitar" → "Scimitar of Speed" da solo).
+    if (!variants) {
+      const prefixed = results.filter(r => r.slug?.startsWith(slug + '-'));
+      if (prefixed.length >= 2) variants = prefixed;
+    }
+  }
+  if (variants) {
+    const ambiguous = new Error('Riferimento generico: nessuna entità esatta, solo varianti specifiche.');
+    ambiguous.variants = variants;
+    throw ambiguous;
+  }
+  return null;
+}
 
 async function fetchEntityRobust(type, slug, src) {
   try {
-    return await tryFetchEntity(type, slug, src);
+    return await tryExactFetch(type, slug, src);
   } catch (err) {
     const altType = ALT_ENTITY_TYPE[type];
-    if (!err.variants && altType) {
-      try { return await tryFetchEntity(altType, slug, src); } catch { /* lancia l'errore originale */ }
+    if (altType) {
+      try { return await tryExactFetch(altType, slug, src); } catch { /* prova comunque la ricerca fuzzy sotto */ }
     }
+    const fuzzy = await tryFuzzyFetch(type, slug);
+    if (fuzzy) return fuzzy;
     throw err;
   }
 }
