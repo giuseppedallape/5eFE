@@ -1010,6 +1010,7 @@ body {
 }
 .spellbook-header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spellbook-count { font-size: 11px; color: var(--c-text3); }
+.spellbook-header-right .locale-row { padding: 0; }
 
 .spellbook-shared-banner {
   display: flex;

@@ -3409,6 +3409,7 @@ async function init() {
       document.querySelectorAll('.locale-btn').forEach(b => b.classList.toggle('active', b === btn));
       if (!TAG_NAME_CACHE[S.locale]) prefetchTagNames(S.locale);
       if (S.type) loadList(1);
+      if (D.app.classList.contains('show-spellbook')) renderSpellbookList();
     })
   );
 
