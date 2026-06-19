@@ -572,45 +572,47 @@ body {
   flex-shrink: 0;
 }
 .board-title {
+  flex-shrink: 0;
   font-size: 13px;
   font-weight: 700;
   color: var(--c-gold);
   text-transform: uppercase;
   letter-spacing: .06em;
 }
-.board-header-right { display: flex; align-items: center; gap: 8px; }
+.board-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .board-count { font-size: 11px; color: var(--c-text3); }
 
 /* Ricerca rapida per aggiungere mostri alla plancia senza uscire dal
    pannello: ogni click su un risultato aggiunge una nuova scheda (anche
-   più volte sullo stesso mostro, per gruppi come "3 goblin"). */
+   più volte sullo stesso mostro, per gruppi come "3 goblin"). In linea
+   nell'header, tra il titolo e i bottoni globali, per non occupare una riga. */
 .board-search-row {
   position: relative;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--c-border);
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 120px;
+  max-width: 360px;
 }
 .board-search-input {
   width: 100%;
-  padding: 7px 10px;
-  border-radius: 6px;
+  padding: 5px 10px;
+  border-radius: 5px;
   border: 1px solid var(--c-border2);
   background: var(--c-surf);
   color: var(--c-text);
-  font-size: 13px;
+  font-size: 12px;
 }
 .board-search-results {
   position: absolute;
   top: 100%;
-  left: 14px;
-  right: 14px;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
   z-index: 30;
   max-height: 280px;
   overflow-y: auto;
   background: var(--c-surf);
   border: 1px solid var(--c-border2);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
+  border-radius: 8px;
   box-shadow: 0 10px 24px rgba(0,0,0,.4);
 }
 .board-search-results:empty { display: none; }

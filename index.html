@@ -90,6 +90,10 @@
     <div id="board-panel" class="board-panel">
       <div class="board-header">
         <h2 class="board-title">Plancia DM</h2>
+        <div class="board-search-row">
+          <input id="board-search-input" type="text" class="board-search-input" placeholder="🔍 Aggiungi un mostro… (es. goblin)" autocomplete="off" spellcheck="false">
+          <div id="board-search-results" class="board-search-results"></div>
+        </div>
         <div class="board-header-right">
           <span id="board-count" class="board-count"></span>
           <button id="board-init-btn" class="btn-ghost" type="button" title="Tira l'iniziativa per ogni mostro (d20 + Destrezza) e ordina la plancia">🎲 Iniziativa</button>
@@ -99,10 +103,6 @@
           <button id="board-focus-btn" class="icon-btn" type="button" title="Schermo intero: nascondi le barre laterali">⛶</button>
           <button id="board-close-btn" class="icon-btn" type="button" title="Chiudi plancia">✕</button>
         </div>
-      </div>
-      <div class="board-search-row">
-        <input id="board-search-input" type="text" class="board-search-input" placeholder="🔍 Cerca un mostro da aggiungere alla plancia… (es. goblin)" autocomplete="off" spellcheck="false">
-        <div id="board-search-results" class="board-search-results"></div>
       </div>
       <div id="board-cards" class="board-cards">
         <div class="board-empty-msg">Nessuna entità sulla plancia.<br>Apri una scheda e clicca «📌 Plancia» per aggiungerla qui.</div>
