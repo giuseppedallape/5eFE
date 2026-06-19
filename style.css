@@ -581,6 +581,59 @@ body {
 .board-header-right { display: flex; align-items: center; gap: 8px; }
 .board-count { font-size: 11px; color: var(--c-text3); }
 
+/* Ricerca rapida per aggiungere mostri alla plancia senza uscire dal
+   pannello: ogni click su un risultato aggiunge una nuova scheda (anche
+   più volte sullo stesso mostro, per gruppi come "3 goblin"). */
+.board-search-row {
+  position: relative;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+.board-search-input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--c-border2);
+  background: var(--c-surf);
+  color: var(--c-text);
+  font-size: 13px;
+}
+.board-search-results {
+  position: absolute;
+  top: 100%;
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--c-surf);
+  border: 1px solid var(--c-border2);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.4);
+}
+.board-search-results:empty { display: none; }
+.board-search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--c-border);
+  font-size: 12.5px;
+}
+.board-search-result:last-child { border-bottom: none; }
+.board-search-result:hover { background: var(--c-surf2); }
+.board-search-result-name { color: var(--c-text); }
+.board-search-result-add { flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--c-gold); }
+.board-search-empty, .board-search-loading {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--c-text3);
+}
+
 .board-cards {
   flex: 1;
   display: flex;
@@ -632,7 +685,7 @@ body {
   color: var(--c-gold);
 }
 .board-card-topbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.board-card-remove, .board-card-color-btn {
+.board-card-remove, .board-card-color-btn, .board-card-dup-btn {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
@@ -649,6 +702,7 @@ body {
 }
 .board-card-remove:hover { border-color: #d46060; color: #d46060; }
 .board-card-color-btn:hover { border-color: var(--c-gold3); color: var(--c-gold); }
+.board-card-dup-btn:hover { border-color: var(--c-gold3); color: var(--c-gold); }
 .board-card-body {
   flex: 1;
   min-height: 0;
@@ -705,6 +759,7 @@ body {
 }
 .board-card[data-colored="1"] > .board-card-topbar .board-card-init-input,
 .board-card[data-colored="1"] > .board-card-topbar .board-card-color-btn,
+.board-card[data-colored="1"] > .board-card-topbar .board-card-dup-btn,
 .board-card[data-colored="1"] > .board-card-topbar .board-card-remove {
   background: rgba(255,255,255,.22);
   border-color: rgba(0,0,0,.3);

@@ -235,6 +235,8 @@ const D = {
   boardInitBtn:    $('board-init-btn'),
   boardHpBtn:      $('board-hp-btn'),
   boardAddPgBtn:   $('board-add-pg-btn'),
+  boardSearchInput:   $('board-search-input'),
+  boardSearchResults: $('board-search-results'),
 };
 
 // ── Utils ──────────────────────────────────────────────
@@ -2424,8 +2426,10 @@ function openColorPopover(card, item) {
 
 function boardCardTopbarHtml(item) {
   const id = esc(item.id);
-  // Niente bottone colore sui segnalibri PG: restano sempre all'oro di base.
+  // Niente bottone colore/duplica sui segnalibri PG: restano sempre all'oro
+  // di base e un PG non si "sdoppia" come un gruppo di mostri uguali.
   const colorBtnHtml = item.type === 'custom' ? '' : `<button class="board-card-color-btn" data-id="${id}" title="Cambia colore">🎨</button>`;
+  const dupBtnHtml = item.type === 'custom' ? '' : `<button class="board-card-dup-btn" data-id="${id}" title="Duplica (es. un altro goblin uguale)">⧉</button>`;
   return `
     <div class="board-card-topbar">
       <div class="board-card-init" title="Iniziativa">
@@ -2433,6 +2437,7 @@ function boardCardTopbarHtml(item) {
         <input type="number" class="board-card-init-input" data-id="${id}" value="${item.initiative ?? ''}" placeholder="—">
       </div>
       <div class="board-card-topbar-actions">
+        ${dupBtnHtml}
         ${colorBtnHtml}
         <button class="board-card-remove" data-id="${id}" title="Rimuovi dalla plancia">✕</button>
       </div>
@@ -2530,6 +2535,49 @@ function toggleBoardEntity(item) {
   else addToBoard(item);
 }
 
+// Id sintetico per le schede della plancia che non corrispondono 1:1 a
+// un'entità pinnata (segnalibri PG, istanze da ricerca rapida, duplicati) —
+// permette di avere più schede indipendenti per lo stesso mostro (es. 3 goblin).
+function genBoardId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Ricerca rapida nella plancia: ogni risultato cliccato diventa una nuova
+// scheda indipendente (id sintetico, non legato al "pin" dell'entità), così
+// si può cliccare più volte sullo stesso mostro per aggiungerne più copie.
+function addBoardInstance(entity) {
+  const item = {
+    id: genBoardId('inst'),
+    type: entity.type,
+    slug: entity.slug || '',
+    src: entity.src || '',
+    name: entity.name || '',
+  };
+  S.board.push(item);
+  persistBoard();
+  updateBoardToggleUi();
+  renderBoardCard(item);
+}
+
+// "⧉ Duplica": sdoppia una scheda mostro già sulla plancia in una copia
+// indipendente (PF, iniziativa e colore propri), per i gruppi di nemici
+// uguali senza dover ripetere la ricerca.
+function duplicateBoardItem(id) {
+  const original = S.board.find(b => b.id === id);
+  if (!original) return;
+  const dup = {
+    id: genBoardId('dup'),
+    type: original.type,
+    slug: original.slug,
+    src: original.src,
+    name: original.name,
+  };
+  S.board.push(dup);
+  persistBoard();
+  updateBoardToggleUi();
+  renderBoardCard(dup);
+}
+
 // ── Iniziativa sulla plancia DM ─────────────────────────
 // Ordina tutte le schede (mostri + segnalibri PG) per iniziativa decrescente;
 // chi non ha ancora un valore va in coda.
@@ -2591,7 +2639,7 @@ function rollAllMissingHp() {
 // Aggiunge un segnalibro manuale alla plancia (tipicamente un PG): niente
 // scheda da caricare, solo nome + iniziativa, per ordinarlo coi mostri.
 function addPgBookmark() {
-  const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const id = genBoardId('custom');
   const item = { id, type: 'custom', slug: '', src: '', name: '', initiative: null };
   S.board.push(item);
   persistBoard();
@@ -2602,10 +2650,41 @@ function addPgBookmark() {
   });
 }
 
+// Ricerca rapida mostri nella plancia (vedi addBoardInstance sopra).
+function renderBoardSearchResults(results) {
+  if (!results.length) {
+    D.boardSearchResults.innerHTML = '<div class="board-search-empty">Nessun mostro trovato.</div>';
+    return;
+  }
+  D.boardSearchResults.innerHTML = results.map(ent => `
+    <div class="board-search-result"
+         data-id="${esc(ent.id)}" data-type="${esc(ent.entityType)}"
+         data-slug="${esc(ent.slug)}" data-src="${esc(ent.source||'')}" data-name="${esc(ent.name)}">
+      <span class="board-search-result-name">${esc(ent.name)}</span>
+      <span class="board-search-result-add">+ Aggiungi</span>
+    </div>`).join('');
+}
+
+async function runBoardSearch(q) {
+  if (!q || q.length < 2) {
+    D.boardSearchResults.innerHTML = '';
+    return;
+  }
+  D.boardSearchResults.innerHTML = '<div class="board-search-loading">Ricerca…</div>';
+  try {
+    const data = await api.list({ q, type: 'monster', locale: S.locale, limit: 20 });
+    renderBoardSearchResults(data.results || []);
+  } catch {
+    D.boardSearchResults.innerHTML = '<div class="board-search-empty">Errore nella ricerca.</div>';
+  }
+}
+
 function openBoard()  { D.app.classList.add('show-board'); }
 function closeBoard() {
   D.app.classList.remove('show-board');
   setBoardFocus(false);
+  D.boardSearchInput.value = '';
+  D.boardSearchResults.innerHTML = '';
 }
 function toggleBoardPanel() {
   D.app.classList.contains('show-board') ? closeBoard() : openBoard();
@@ -2668,6 +2747,10 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.board-card-color-btn, .board-card-color-pop')) {
     closeColorPopover();
   }
+  // chiude i risultati della ricerca rapida mostri se si clicca fuori dalla riga
+  if (!e.target.closest('.board-search-row')) {
+    D.boardSearchResults.innerHTML = '';
+  }
 
   // image button
   const imgBtn = e.target.closest('.img-btn, .entry-img-wrap');
@@ -2701,6 +2784,26 @@ document.addEventListener('click', e => {
   const boardRemoveBtn = e.target.closest('.board-card-remove');
   if (boardRemoveBtn) {
     removeFromBoard(boardRemoveBtn.dataset.id);
+    return;
+  }
+
+  // risultato della ricerca rapida: aggiunge una nuova istanza alla plancia
+  // (il dropdown resta aperto, per poter cliccare più volte sullo stesso mostro)
+  const searchResult = e.target.closest('.board-search-result');
+  if (searchResult) {
+    addBoardInstance({
+      type: searchResult.dataset.type,
+      slug: searchResult.dataset.slug,
+      src:  searchResult.dataset.src,
+      name: searchResult.dataset.name,
+    });
+    return;
+  }
+
+  // duplica una scheda mostro (es. un altro goblin uguale)
+  const dupBtn = e.target.closest('.board-card-dup-btn');
+  if (dupBtn) {
+    duplicateBoardItem(dupBtn.dataset.id);
     return;
   }
 
@@ -2893,6 +2996,7 @@ async function init() {
   D.boardInitBtn.addEventListener('click', rollBoardInitiative);
   D.boardHpBtn.addEventListener('click', rollAllMissingHp);
   D.boardAddPgBtn.addEventListener('click', addPgBookmark);
+  D.boardSearchInput.addEventListener('input', debounce(e => runBoardSearch(e.target.value.trim()), 300));
   D.boardClearBtn.addEventListener('click', () => {
     if (!S.board.length) return;
     if (!confirm('Svuotare la plancia DM?')) return;
