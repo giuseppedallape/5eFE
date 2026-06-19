@@ -12,6 +12,7 @@ const TYPES = [
   { key: 'background',        label: 'Background',           icon: '📜', color: '#6090d4' },
   { key: 'feat',              label: 'Imprese',              icon: '★', color: '#c060a0' },
   { key: 'item',              label: 'Oggetti',              icon: '⚗', color: '#50b8b8' },
+  { key: 'itemBase',          label: 'Equipaggiamento',      icon: '🎒', color: '#a89464' },
   { key: 'optionalFeature',   label: 'Cap. Opzionali',       icon: '◆', color: '#8090a8' },
   { key: 'classFeature',      label: 'Cap. di Classe',       icon: '◇', color: '#9095b0' },
   { key: 'subclassFeature',   label: 'Cap. di Sottoclasse',  icon: '◈', color: '#8085a8' },
@@ -568,9 +569,15 @@ const api = {
   bySlug:  (type, slug, src) => {
     const p = { locale: S.locale };
     if (src) p.source = src;
+    // l'itemBase (equipaggiamento di base) non ha dati "game" normalizzati:
+    // CA/danno/peso/valore sono disponibili solo nei dati grezzi 5e.
+    if (type === 'itemBase') p.includeRaw = 'true';
     return apiFetch(`/entities/by-slug/${encodeURIComponent(type)}/${encodeURIComponent(slug)}`, p);
   },
-  byId:    id              => apiFetch(`/entities/by-id/${encodeURIComponent(id)}`, { locale: S.locale }),
+  byId:    id => apiFetch(`/entities/by-id/${encodeURIComponent(id)}`, {
+    locale: S.locale,
+    ...(String(id).startsWith('itemBase:') ? { includeRaw: 'true' } : {}),
+  }),
   filters: async type => {
     if (S.filterCache[type]) return S.filterCache[type];
     const d = await apiFetch(`/filters/${encodeURIComponent(type)}`);
@@ -1047,6 +1054,60 @@ async function monsterDetail(ent) {
     </div>
     ${inheritedHtml}
     <div class="det-body">${renderContent(content)}</div>`;
+}
+
+// ── Equipaggiamento di base (armi/armature/attrezzatura non magica) ────
+// A differenza degli item magici, l'itemBase non ha dati "game" normalizzati:
+// CA, danno, peso e valore vengono dai dati grezzi 5e (richiesti con
+// includeRaw, vedi api.bySlug/byId), nel formato sintetico a sigle del
+// formato 5etools (es. "LA"/"MA"/"HA" per le armature, "S"/"P"/"B" per i
+// tipi di danno) — qui se ne traduce solo il sottoinsieme che serve davvero
+// (armi e armature), il resto dell'equipaggiamento mostra solo peso/valore.
+const ARMOR_TYPE_LABELS = { LA: 'Armatura leggera', MA: 'Armatura media', HA: 'Armatura pesante', S: 'Scudo' };
+const RAW_DAMAGE_LETTERS = { B: 'bludgeoning', P: 'piercing', S: 'slashing' };
+const WEAPON_PROPERTY_NAMES = {
+  A: 'Munizioni', F: 'Finezza', H: 'Pesante', L: 'Leggera', LD: 'Caricamento',
+  R: 'Portata', RLD: 'Ricarica', S: 'Speciale', T: 'Lancio', '2H': 'A due mani', V: 'Versatile',
+};
+
+function itemBaseDetail(ent) {
+  const raw = ent.raw5e || {};
+  const rows = [];
+
+  if (raw.armor || raw.ac != null) {
+    const typeLabel = ARMOR_TYPE_LABELS[raw.type];
+    let acText = raw.ac != null ? String(raw.ac) : '—';
+    if (raw.type === 'S') acText = `+${raw.ac}`;
+    else if (raw.type === 'LA') acText += ' + mod. Des';
+    else if (raw.type === 'MA') acText += ' + mod. Des (max 2)';
+    rows.push(['CA', acText]);
+    if (typeLabel) rows.push(['Tipo', typeLabel]);
+    if (raw.strength) rows.push(['Forza richiesta', raw.strength]);
+    if (raw.stealth)  rows.push(['Furtività', 'Svantaggio', 'rar-uncommon']);
+  }
+
+  if (raw.weapon || raw.dmg1) {
+    if (raw.weaponCategory) rows.push(['Categoria', WEAPON_CAT_NAMES[raw.weaponCategory] || cap(raw.weaponCategory)]);
+    const dmgTypeLabel = raw.dmgType ? dmgName(RAW_DAMAGE_LETTERS[raw.dmgType] || raw.dmgType) : '';
+    if (raw.dmg1) rows.push(['Danno', `${raw.dmg1} ${dmgTypeLabel}`.trim()]);
+    if (raw.dmg2) rows.push(['Danno (due mani)', `${raw.dmg2} ${dmgTypeLabel}`.trim()]);
+    const props = (raw.property || []).map(p => WEAPON_PROPERTY_NAMES[p] || p).join(', ');
+    if (props) rows.push(['Proprietà', props]);
+    if (raw.range) rows.push(['Gittata', raw.range]);
+  }
+
+  if (raw.weight != null) rows.push(['Peso', `${raw.weight} lb.`]);
+  if (raw.value  != null) rows.push(['Valore', `${(raw.value / 100).toLocaleString()} mo`]);
+
+  const metaGrid = rows.length ? `
+    <div class="spell-grid" style="margin:18px 26px;">
+      ${rows.map(([lbl, val, cls]) =>
+        `<div class="sg-cell"><div class="sg-label">${esc(lbl)}</div><div class="sg-val ${cls||''}">${esc(val)}</div></div>`
+      ).join('')}
+    </div>` : '';
+
+  const content = ent.content?.localized || ent.content?.english;
+  return `${metaGrid}<div class="det-body">${renderContent(content)}</div>`;
 }
 
 function itemDetail(ent) {
@@ -1728,7 +1789,8 @@ async function renderDetail(ent, inModal = false) {
   switch (ent.entityType) {
     case 'spell':   body = spellDetail(ent);         break;
     case 'monster': body = await monsterDetail(ent); break;
-    case 'item':    body = itemDetail(ent);          break;
+    case 'item':     body = itemDetail(ent);         break;
+    case 'itemBase': body = itemBaseDetail(ent);      break;
     case 'class':    body = await classDetail(ent);    break;
     case 'subclass': body = await subclassDetail(ent); break;
     case 'race':     body = await raceDetail(ent);     break;
