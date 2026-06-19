@@ -579,6 +579,44 @@ const api = {
   },
 };
 
+// L'API esterna risponde talvolta 404 su by-slug per entità che esistono
+// comunque (es. alcuni mostri di Curse of Strahd, quando si passa il
+// parametro source — anche il filtro "source" della ricerca per lista è
+// inaffidabile per le stesse fonti) e talvolta 409 con dei candidati
+// suggeriti. Usato per i link a entità dentro al testo ({@creature ...}
+// ecc.), dove abbiamo solo slug+source e non un id reale da cui ripartire.
+//
+// Come ultima spiaggia si prova una ricerca testuale per nome derivato dallo
+// slug, ignorando il filtro "source": si tenta la frase intera nella lingua
+// corrente, poi in inglese (lo slug deriva sempre dal nome originale inglese),
+// poi solo le ultime due/una parola, perché l'ordine delle parole nel nome
+// localizzato può differire da quello dello slug (es. "Strahd's Animated
+// Armor" → "Armatura Animata di Strahd"). Il match valido è sempre quello
+// con lo slug esatto tra i risultati, non il primo della lista.
+async function fetchEntityRobust(type, slug, src) {
+  try {
+    return await api.bySlug(type, slug, src || undefined);
+  } catch (err) {
+    if (err.status === 409 && err.data?.results?.length) {
+      return await api.byId(err.data.results[0].id);
+    }
+    const words = slug.split('-').filter(Boolean);
+    const attempts = [
+      { locale: S.locale, q: words.join(' ') },
+      { locale: 'en',     q: words.join(' ') },
+      { locale: 'en',     q: words.slice(-2).join(' ') },
+      { locale: 'en',     q: words.slice(-1).join(' ') },
+    ];
+    for (const { locale, q } of attempts) {
+      if (!q) continue;
+      const data = await api.list({ type, q, locale, limit: 10 }).catch(() => null);
+      const hit = data?.results?.find(r => r.slug === slug);
+      if (hit) return await api.byId(hit.id);
+    }
+    throw err;
+  }
+}
+
 // ── Entry renderer ─────────────────────────────────────
 function renderEntry(e) {
   if (e == null) return '';
@@ -2186,16 +2224,9 @@ const modal = {
   async loadEntity(type, slug, src) {
     this.open('<div class="modal-loading"><div class="spinner" style="width:28px;height:28px;border-width:3px;"></div></div>');
     try {
-      const ent = await api.bySlug(type, slug, src || undefined);
+      const ent = await fetchEntityRobust(type, slug, src);
       this.open(await renderDetail(ent, true));
     } catch (err) {
-      if (err.status === 409 && err.data?.results?.length) {
-        try {
-          const ent = await api.byId(err.data.results[0].id);
-          this.open(await renderDetail(ent, true));
-          return;
-        } catch { /* fall through */ }
-      }
       this.open(`<div class="modal-error">Entità non trovata: <em>${esc(slug)}</em><br><small style="color:var(--c-text3)">${esc(err.message)}</small></div>`);
     }
   },
