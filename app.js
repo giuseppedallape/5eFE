@@ -3661,9 +3661,21 @@ async function bGenerate() {
   btn.textContent = 'Generazione…';
 
   try {
-    // Validate first to surface readable errors
-    const vres = await apiPost('/builds/validate', bBuildBody());
-    if (!vres.valid && vres.errors?.length) {
+    // /builds/validate returns 422 when choices are incomplete — extract errors from e.data.errors
+    let vres = null;
+    try {
+      vres = await apiPost('/builds/validate', bBuildBody());
+    } catch(ve) {
+      const verrs = ve.data?.errors;
+      if (verrs?.length) {
+        const msgs = verrs.slice(0,8).map(e => `• ${esc(e.message || e.code)}`).join('<br>');
+        errEl.innerHTML = `<strong>Errori da correggere:</strong><br>${msgs}`;
+        errEl.classList.remove('hidden');
+        return;
+      }
+      throw ve;
+    }
+    if (vres && !vres.valid && vres.errors?.length) {
       const msgs = vres.errors.slice(0,8).map(e => `• ${esc(e.message || e.code)}`).join('<br>');
       errEl.innerHTML = `<strong>Errori da correggere:</strong><br>${msgs}`;
       errEl.classList.remove('hidden');
@@ -3674,7 +3686,15 @@ async function bGenerate() {
     if (result.sheet) bRenderSheet(result.sheet);
 
   } catch(e) {
-    const msg = e.data?.message || e.data?.error || e.message || 'Errore sconosciuto';
+    // Also handle 422 from /builds/sheet
+    const verrs = e.data?.errors;
+    if (verrs?.length) {
+      const msgs = verrs.slice(0,8).map(err => `• ${esc(err.message || err.code)}`).join('<br>');
+      errEl.innerHTML = `<strong>Errori da correggere:</strong><br>${msgs}`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const msg = e.data?.message || e.data?.error || e.message || `Errore HTTP ${e.status || ''}`;
     errEl.innerHTML = `<strong>Errore:</strong> ${esc(msg)}`;
     errEl.classList.remove('hidden');
     console.error('Forgia generate error:', e);
