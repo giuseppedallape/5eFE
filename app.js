@@ -3075,6 +3075,1004 @@ function saveSharedBook() {
   renderSpellbookList();
 }
 
+// ── Forgia del Personaggio ──────────────────────────────────────────────────
+
+const BUILDER_KEY   = 'nuovo5e:forgia:v1';
+const BSTAT_ORDER   = ['str','dex','con','int','wis','cha'];
+const BSTAT_SHORT   = { str:'FOR', dex:'DES', con:'COS', int:'INT', wis:'SAG', cha:'CAR' };
+const BSTAT_IT      = { str:'Forza', dex:'Destrezza', con:'Costituzione', int:'Intelligenza', wis:'Saggezza', cha:'Carisma' };
+const BSTD_ARRAY    = [15,14,13,12,10,8];
+const BPB_COSTS     = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
+const BSKILL_IT     = {
+  acrobatics:'Acrobazia', animal_handling:'Gestire Animali', arcana:'Arcana',
+  athletics:'Atletica', deception:'Inganno', history:'Storia', insight:'Intuizione',
+  intimidation:'Intimidazione', investigation:'Investigazione', medicine:'Medicina',
+  nature:'Natura', perception:'Percezione', performance:'Intrattenere',
+  persuasion:'Persuasione', religion:'Religione', sleight_of_hand:'Rapidità di Mano',
+  stealth:'Furtività', survival:'Sopravvivenza',
+};
+const BSKILLS_ALL   = [
+  {k:'acrobatics',s:'dex'},{k:'animal_handling',s:'wis'},{k:'arcana',s:'int'},
+  {k:'athletics',s:'str'},{k:'deception',s:'cha'},{k:'history',s:'int'},
+  {k:'insight',s:'wis'},{k:'intimidation',s:'cha'},{k:'investigation',s:'int'},
+  {k:'medicine',s:'wis'},{k:'nature',s:'int'},{k:'perception',s:'wis'},
+  {k:'performance',s:'cha'},{k:'persuasion',s:'cha'},{k:'religion',s:'int'},
+  {k:'sleight_of_hand',s:'dex'},{k:'stealth',s:'dex'},{k:'survival',s:'wis'},
+];
+const BCHOICE_KIND_LABELS = {
+  proficiency:'Competenza', subrace:'Sottorazza', subclass:'Sottoclasse',
+  feat:'Impresa', optionalFeature:'Capacità Opzionale',
+  optionalFeatureProgression:'Stile/Invocazione', startingEquipment:'Equipaggiamento',
+};
+const BSCOPE_LABELS  = { race:'Razza', class:'Classe', background:'Background' };
+const BSPELL_LABELS  = {
+  cantripsKnown:'Trucchi', spellsKnown:'Incantesimi Noti', spellbook:'Libro degli Incantesimi',
+  preparedSpells:'Incantesimi Preparati', pactMagic:'Incantesimi del Patto',
+};
+
+let BL   = null; // entity lists cache { races, classes, bgs }
+let BD   = null; // draft response
+let BS   = bsDefault();
+
+function bsDefault() {
+  return {
+    locale:'it', name:'',
+    race:'', raceSource:'', class:'', classSource:'',
+    background:'', backgroundSource:'', level:1,
+    method:'standardArray',
+    assignments:{ str:15, dex:14, con:13, int:12, wis:10, cha:8 },
+    choices:{}, spellChoices:{},
+  };
+}
+
+function bsSave() { try { localStorage.setItem(BUILDER_KEY, JSON.stringify(BS)); } catch {} }
+function bsLoad() {
+  try {
+    const raw = localStorage.getItem(BUILDER_KEY);
+    if (raw) BS = { ...bsDefault(), ...JSON.parse(raw) };
+  } catch { BS = bsDefault(); }
+}
+
+// ── Panel open/close ────────────────────────────────────
+
+function openBuilderPanel() {
+  D.app.classList.add('show-builder');
+  if (!BL) bLoadLists(); else bRenderForm();
+}
+function closeBuilderPanel() { D.app.classList.remove('show-builder'); }
+function toggleBuilderPanel() {
+  D.app.classList.contains('show-builder') ? closeBuilderPanel() : openBuilderPanel();
+}
+
+// ── Entity lists ────────────────────────────────────────
+
+async function bLoadLists() {
+  document.getElementById('b-loading').classList.remove('hidden');
+  try {
+    const [races, classes, bgs] = await Promise.all([
+      api.list({ type:'race',       limit:200, sort:'name', locale:BS.locale }),
+      api.list({ type:'class',      limit:50,  sort:'name', locale:BS.locale }),
+      api.list({ type:'background', limit:300, sort:'name', locale:BS.locale }),
+    ]);
+    BL = { races:races.results, classes:classes.results, bgs:bgs.results };
+  } catch(e) {
+    console.error('Builder: list load failed', e);
+  } finally {
+    document.getElementById('b-loading').classList.add('hidden');
+  }
+  bRenderForm();
+}
+
+function bFillSelect(id, items, curSlug, curSrc) {
+  const sel = document.getElementById(id);
+  if (!sel || !items) return;
+  const selKey = curSlug ? `${curSlug}|${curSrc}` : '';
+  sel.innerHTML = '<option value="">— Scegli —</option>' +
+    items.map(e => {
+      const parts = e.id.split(':');
+      const src   = parts[1];
+      const slug  = parts.slice(2).join(':');
+      const key   = `${slug}|${src}`;
+      return `<option value="${esc(key)}"${key === selKey ? ' selected' : ''}>${esc(e.name)}</option>`;
+    }).join('');
+}
+
+// ── Form render ─────────────────────────────────────────
+
+function bRenderForm() {
+  document.getElementById('b-form-view').classList.remove('hidden');
+  document.getElementById('b-sheet-view').classList.add('hidden');
+
+  // Locale buttons
+  document.querySelectorAll('[data-b-locale]').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.bLocale === BS.locale)
+  );
+  // Selects
+  if (BL) {
+    bFillSelect('b-race',       BL.races,   BS.race,       BS.raceSource);
+    bFillSelect('b-class',      BL.classes, BS.class,      BS.classSource);
+    bFillSelect('b-background', BL.bgs,     BS.background, BS.backgroundSource);
+  }
+  document.getElementById('b-name').value  = BS.name || '';
+  document.getElementById('b-level').value = BS.level || 1;
+
+  const hasDraft = !!BD;
+  document.getElementById('b-sec-scores').classList.toggle('hidden', !hasDraft);
+  document.getElementById('b-sec-choices').classList.toggle('hidden', !hasDraft);
+  document.getElementById('b-generate-row').classList.toggle('hidden', !hasDraft);
+
+  const hasSpells = hasDraft && (BD.spellChoiceManifest?.choices?.length > 0);
+  document.getElementById('b-sec-spells').classList.toggle('hidden', !hasSpells);
+
+  if (hasDraft) {
+    bRenderScores();
+    bRenderChoices();
+    if (hasSpells) bRenderSpells(); // async, no await — renders progressively
+  }
+}
+
+// ── Ability scores ──────────────────────────────────────
+
+function bRenderScores() {
+  document.querySelectorAll('[name=b-method]').forEach(r => { r.checked = r.value === BS.method; });
+  bRenderScoreInputs();
+}
+
+function bRenderScoreInputs() {
+  const el  = document.getElementById('b-scores-ui');
+  if (!el) return;
+  const met = BS.method;
+  const as  = BS.assignments;
+
+  if (met === 'standardArray') {
+    el.innerHTML = `
+      <div class="b-sa-hint">Assegna i valori [${BSTD_ARRAY.join(', ')}] alle sei caratteristiche:</div>
+      <div class="b-scores-grid">
+        ${BSTAT_ORDER.map(stat => {
+          const cur = as[stat] ?? 10;
+          const used = Object.entries(as).filter(([s]) => s !== stat).map(([,v]) => v);
+          const avail = BSTD_ARRAY.filter(v => v === cur || !used.includes(v));
+          return `<div class="b-score-cell">
+            <div class="b-score-name">${BSTAT_SHORT[stat]}</div>
+            <select class="b-score-sel" data-stat="${stat}">
+              ${avail.map(v => `<option value="${v}"${v===cur?' selected':''}>${v}</option>`).join('')}
+            </select>
+            <div class="b-score-mod">${abMod(cur)}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    el.querySelectorAll('.b-score-sel').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const stat  = sel.dataset.stat;
+        const oldV  = BS.assignments[stat];
+        const newV  = +sel.value;
+        const clash = BSTAT_ORDER.find(s => s !== stat && BS.assignments[s] === newV);
+        if (clash) BS.assignments[clash] = oldV;
+        BS.assignments[stat] = newV;
+        bsSave(); bRenderScoreInputs();
+      });
+    });
+
+  } else if (met === 'pointBuy') {
+    const spent     = BSTAT_ORDER.reduce((sum, s) => sum + (BPB_COSTS[as[s]] ?? 0), 0);
+    const remaining = 27 - spent;
+    el.innerHTML = `
+      <div class="b-pb-budget">Budget: <strong>${remaining} pt</strong> rimanenti su 27</div>
+      <div class="b-scores-grid">
+        ${BSTAT_ORDER.map(stat => {
+          const val = as[stat] ?? 8;
+          return `<div class="b-score-cell">
+            <div class="b-score-name">${BSTAT_SHORT[stat]}</div>
+            <div class="b-pb-ctrl">
+              <button class="b-pb-btn" data-stat="${stat}" data-d="-">−</button>
+              <span class="b-pb-val">${val}</span>
+              <button class="b-pb-btn" data-stat="${stat}" data-d="+">+</button>
+            </div>
+            <div class="b-score-mod">${abMod(val)}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    el.querySelectorAll('.b-pb-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const stat   = btn.dataset.stat;
+        const dir    = btn.dataset.d;
+        const cur    = BS.assignments[stat] ?? 8;
+        const next   = cur + (dir === '+' ? 1 : -1);
+        if (next < 8 || next > 15) return;
+        const curSpent = BSTAT_ORDER.reduce((s, k) => s + (BPB_COSTS[BS.assignments[k]] ?? 0), 0);
+        const addCost  = (BPB_COSTS[next] ?? 0) - (BPB_COSTS[cur] ?? 0);
+        if (addCost > 0 && curSpent + addCost > 27) return;
+        BS.assignments[stat] = next;
+        bsSave(); bRenderScoreInputs();
+      });
+    });
+
+  } else {
+    el.innerHTML = `
+      <div class="b-sa-hint">Inserisci i punteggi liberamente (3–20):</div>
+      <div class="b-scores-grid">
+        ${BSTAT_ORDER.map(stat => {
+          const val = as[stat] ?? 10;
+          return `<div class="b-score-cell">
+            <div class="b-score-name">${BSTAT_SHORT[stat]}</div>
+            <input type="number" class="b-score-input" data-stat="${stat}" min="3" max="20" value="${val}">
+            <div class="b-score-mod" id="bsm-${stat}">${abMod(val)}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    el.querySelectorAll('.b-score-input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const stat = inp.dataset.stat;
+        const val  = Math.max(3, Math.min(20, +inp.value || 10));
+        BS.assignments[stat] = val;
+        const modEl = document.getElementById(`bsm-${stat}`);
+        if (modEl) modEl.textContent = abMod(val);
+        bsSave();
+      });
+    });
+  }
+}
+
+// ── Non-spell choices ───────────────────────────────────
+
+function bRenderChoices() {
+  const el  = document.getElementById('b-choices-ui');
+  if (!el) return;
+  const all = BD?.choiceManifest?.choices || [];
+  if (!all.length) { el.innerHTML = '<div class="b-sa-hint">Nessuna scelta richiesta.</div>'; return; }
+
+  el.innerHTML = all.map(c => bChoiceWidget(c)).join('');
+  all.forEach(c => bAttachChoiceEvents(c));
+}
+
+// Normalize option shapes: API can return {value,label}, {id,name}, or {key,label,items[]}
+function bOptVal(o)   { return o.value ?? o.id ?? o.key ?? ''; }
+function bOptLabel(o) { return o.label ?? o.name ?? bOptVal(o); }
+
+function bChoiceWidget(choice) {
+  const { id, kind, count = 1, options = [], scope } = choice;
+  const title = BCHOICE_KIND_LABELS[kind] || kind;
+  const sc    = BSCOPE_LABELS[scope] || scope;
+
+  if (kind === 'abilityScoreImprovement') return bASIWidget(choice);
+
+  const isMulti = kind === 'proficiency';
+  const current  = BS.choices[id];
+
+  if (isMulti) {
+    const sel = Array.isArray(current) ? current : [];
+    return `<div class="b-choice-group" id="cg-${esc(id)}">
+      <div class="b-choice-title">${esc(sc)} — ${esc(title)} <span class="b-choice-count">(scegli ${count})</span></div>
+      <div class="b-checkbox-grid">
+        ${options.map(o => {
+          const val = bOptVal(o);
+          return `<label class="b-checkbox-label">
+            <input type="checkbox" data-cid="${esc(id)}" data-count="${count}" value="${esc(val)}"${sel.includes(val)?' checked':''}>
+            <span>${esc(bOptLabel(o))}</span></label>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Equipment choices: options are {key, label, items[]}
+  if (kind === 'startingEquipment') {
+    const selVal = typeof current === 'string' ? current : '';
+    return `<div class="b-choice-group" id="cg-${esc(id)}">
+      <div class="b-choice-title">${esc(sc)} — ${esc(title)}</div>
+      <select class="b-select" data-cid="${esc(id)}">
+        <option value="">— Scegli —</option>
+        ${options.map(o => {
+          const itemNames = (o.items||[]).map(it => {
+            const name = it.item?.name || it.item?.originalName || '';
+            return it.quantity > 1 ? `${it.quantity}x ${name}` : name;
+          }).join(', ');
+          const selectorNames = (o.selectors||[]).map(s => s.label || s.type || 'arma a scelta').join(', ');
+          const display = [itemNames, selectorNames].filter(Boolean).join(', ') || o.label || o.key;
+          return `<option value="${esc(o.key)}"${o.key===selVal?' selected':''}>${esc(display)}</option>`;
+        }).join('')}
+      </select>
+    </div>`;
+  }
+
+  // Single-select (subrace, subclass, feat, optionalFeatureProgression, etc.)
+  const selVal = typeof current === 'string' ? current : '';
+  return `<div class="b-choice-group" id="cg-${esc(id)}">
+    <div class="b-choice-title">${esc(sc)} — ${esc(title)}</div>
+    <select class="b-select" data-cid="${esc(id)}">
+      <option value="">— Scegli —</option>
+      ${options.map(o => {
+        const val = bOptVal(o);
+        return `<option value="${esc(val)}"${val===selVal?' selected':''}>${esc(bOptLabel(o))}</option>`;
+      }).join('')}
+    </select>
+  </div>`;
+}
+
+function bASIWidget(choice) {
+  const { id } = choice;
+  const level   = id.split('.').pop();
+  const cur     = BS.choices[id] || { mode:'increase', abilities:['str'] };
+  const mode    = cur.mode || 'increase';
+  const abs     = cur.abilities || ['str'];
+  const featVal = cur.feat || '';
+  const rawFeatOpts = choice.featOptions || choice.options || [];
+  const featOpts = rawFeatOpts.map(f => ({ value: bOptVal(f), label: bOptLabel(f) }));
+
+  return `<div class="b-choice-group" id="cg-${esc(id)}">
+    <div class="b-choice-title">Classe — Miglioramento Caratteristica (liv. ${esc(level)})</div>
+    <div class="b-asi-radios">
+      <label class="b-radio-label"><input type="radio" name="asi-m-${esc(id)}" value="increase" data-cid="${esc(id)}" data-f="mode"${mode==='increase'?' checked':''}> +2 / +1+1 a Caratteristica</label>
+      <label class="b-radio-label"><input type="radio" name="asi-m-${esc(id)}" value="feat"     data-cid="${esc(id)}" data-f="mode"${mode==='feat'?' checked':''}> Impresa</label>
+    </div>
+    <div id="asi-inc-${esc(id)}"${mode!=='increase'?' style="display:none"':''}>
+      <div class="b-label" style="margin-bottom:4px">+2 a una caratteristica:</div>
+      <select class="b-select" data-cid="${esc(id)}" data-f="ab1" style="margin-bottom:8px">
+        ${BSTAT_ORDER.map(s => `<option value="${s}"${abs[0]===s?' selected':''}>${BSTAT_IT[s]}</option>`).join('')}
+      </select>
+      <div class="b-label" style="margin-bottom:4px">— oppure — +1 a due caratteristiche:</div>
+      <div style="display:flex;gap:6px">
+        <select class="b-select" data-cid="${esc(id)}" data-f="ab1b">
+          ${BSTAT_ORDER.map(s => `<option value="${s}"${(abs[0]===s&&abs.length>1)?' selected':''}>${BSTAT_IT[s]}</option>`).join('')}
+        </select>
+        <select class="b-select" data-cid="${esc(id)}" data-f="ab2">
+          ${BSTAT_ORDER.map(s => `<option value="${s}"${abs[1]===s?' selected':''}>${BSTAT_IT[s]}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="asi-feat-${esc(id)}"${mode!=='feat'?' style="display:none"':''}>
+      <select class="b-select" data-cid="${esc(id)}" data-f="feat">
+        <option value="">— Scegli un'impresa —</option>
+        ${featOpts.map(f => `<option value="${esc(f.value)}"${f.value===featVal?' selected':''}>${esc(f.label)}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+}
+
+function bAttachChoiceEvents(choice) {
+  const { id, kind, count = 1 } = choice;
+  const cg = document.getElementById(`cg-${id}`);
+  if (!cg) return;
+
+  if (kind === 'abilityScoreImprovement') {
+    cg.querySelectorAll(`[name="asi-m-${id}"]`).forEach(r => {
+      r.addEventListener('change', () => {
+        const cur  = BS.choices[id] || {};
+        BS.choices[id] = { ...cur, mode: r.value };
+        const incEl  = document.getElementById(`asi-inc-${id}`);
+        const featEl = document.getElementById(`asi-feat-${id}`);
+        if (incEl)  incEl.style.display  = r.value === 'increase' ? '' : 'none';
+        if (featEl) featEl.style.display = r.value === 'feat'     ? '' : 'none';
+        bsSave();
+      });
+    });
+    cg.querySelectorAll('select[data-f]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const cur = BS.choices[id] || { mode:'increase', abilities:['str'] };
+        const f   = sel.dataset.f;
+        if (f === 'feat') {
+          BS.choices[id] = { ...cur, feat: sel.value };
+        } else if (f === 'ab1') {
+          BS.choices[id] = { ...cur, abilities: [sel.value] };
+        } else if (f === 'ab1b') {
+          const a2 = cur.abilities?.[1] || 'dex';
+          BS.choices[id] = { ...cur, abilities: [sel.value, a2] };
+        } else if (f === 'ab2') {
+          const a1 = cur.abilities?.[0] || 'str';
+          BS.choices[id] = { ...cur, abilities: [a1, sel.value] };
+        }
+        bsSave();
+      });
+    });
+    return;
+  }
+
+  const isMulti = kind === 'proficiency';
+  if (isMulti) {
+    const initCheck = () => {
+      const nowChecked = Array.from(cg.querySelectorAll('input:checked'));
+      cg.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.disabled = !cb.checked && nowChecked.length >= count;
+      });
+    };
+    cg.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (Array.from(cg.querySelectorAll('input:checked')).length > count) {
+          cb.checked = false; return;
+        }
+        BS.choices[id] = Array.from(cg.querySelectorAll('input:checked')).map(c => c.value);
+        bsSave(); initCheck();
+      });
+      initCheck();
+    });
+  } else {
+    const sel = cg.querySelector('select[data-cid]');
+    if (sel) sel.addEventListener('change', () => { BS.choices[id] = sel.value; bsSave(); });
+  }
+}
+
+// ── Spell choices ───────────────────────────────────────
+
+async function bRenderSpells() {
+  const el  = document.getElementById('b-spells-ui');
+  if (!el) return;
+  const all = BD?.spellChoiceManifest?.choices || [];
+
+  // Show skeletons first
+  el.innerHTML = all.map(c => {
+    const { id, kind, count = 1, spellLevelMin = 0, spellLevelMax = 9 } = c;
+    const title  = BSPELL_LABELS[kind] || kind;
+    const lvlStr = spellLevelMin === 0 ? 'trucchi'
+      : spellLevelMin === spellLevelMax ? `liv. ${spellLevelMin}`
+      : `liv. ${spellLevelMin}–${spellLevelMax}`;
+    return `<div class="b-choice-group" id="scg-${esc(id)}">
+      <div class="b-choice-title">${esc(title)} <span class="b-choice-count">(scegli ${count}, ${lvlStr})</span></div>
+      <div class="b-sa-hint">Caricamento incantesimi…</div>
+    </div>`;
+  }).join('');
+
+  // Fetch spells for each choice concurrently
+  await Promise.all(all.map(async c => {
+    const { id, count = 1, path } = c;
+    const cg = document.getElementById(`scg-${id}`);
+    if (!cg) return;
+
+    let spells = [];
+    if (path) {
+      try {
+        const res  = await fetch(path);
+        const data = await res.json();
+        spells = data.results || [];
+      } catch(e) { console.warn('Builder: spell fetch failed', id, e); }
+    }
+
+    const selected = BS.spellChoices[id] || [];
+    cg.innerHTML = cg.querySelector('.b-choice-title').outerHTML +
+      `<input type="text" class="b-spell-search" data-scid="${esc(id)}" placeholder="Filtra incantesimi…">
+      <div class="b-checkbox-grid b-spell-grid">
+        ${spells.length
+          ? spells.map(s => {
+              const val = s.id || '';
+              const lbl = s.name || s.originalName || val;
+              return `<label class="b-checkbox-label">
+                <input type="checkbox" data-scid="${esc(id)}" data-count="${count}" value="${esc(val)}"${selected.includes(val)?' checked':''}>
+                <span>${esc(lbl)}</span></label>`;
+            }).join('')
+          : '<span class="b-sa-hint">Nessun incantesimo disponibile.</span>'}
+      </div>`;
+    bAttachSpellEvents(c);
+  }));
+}
+
+function bAttachSpellEvents(choice) {
+  const { id, count = 1 } = choice;
+  // spell containers use scg- prefix
+  const cg = document.getElementById(`scg-${id}`);
+  if (!cg) return;
+
+  const search = cg.querySelector('.b-spell-search');
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase();
+      cg.querySelectorAll('.b-checkbox-label').forEach(lbl => {
+        lbl.hidden = !!(q && !lbl.querySelector('span')?.textContent?.toLowerCase().includes(q));
+      });
+    });
+  }
+
+  const initCheck = () => {
+    const nowChecked = Array.from(cg.querySelectorAll('input:checked'));
+    cg.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.disabled = !cb.checked && nowChecked.length >= count;
+    });
+  };
+  cg.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (Array.from(cg.querySelectorAll('input:checked')).length > count) {
+        cb.checked = false; return;
+      }
+      BS.spellChoices[id] = Array.from(cg.querySelectorAll('input:checked')).map(c => c.value);
+      bsSave(); initCheck();
+    });
+    initCheck();
+  });
+}
+
+// ── Load draft ──────────────────────────────────────────
+
+async function bLoadChoices() {
+  const errEl = document.getElementById('b-errors');
+  errEl.classList.add('hidden');
+
+  if (!BS.race || !BS.class || !BS.background) {
+    errEl.innerHTML = 'Seleziona razza, classe e background prima di continuare.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('b-load-btn');
+  btn.disabled = true;
+  btn.textContent = 'Caricamento…';
+
+  try {
+    BD = await apiFetch('/builds/draft', {
+      race:             BS.race,
+      raceSource:       BS.raceSource,
+      class:            BS.class,
+      classSource:      BS.classSource,
+      background:       BS.background,
+      backgroundSource: BS.backgroundSource,
+      level:            BS.level,
+      locale:           BS.locale,
+    });
+    // Reset choices when draft changes (identity changed)
+    BS.choices      = {};
+    BS.spellChoices = {};
+    bsSave();
+    bRenderForm();
+  } catch(e) {
+    errEl.innerHTML = `Errore nel caricamento delle scelte: ${esc(e.message || 'sconosciuto')}`;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Carica Scelte →';
+  }
+}
+
+// ── Generate sheet ──────────────────────────────────────
+
+async function apiPost(path, body) {
+  const url = new URL(API + path, location.origin);
+  const res = await fetch(url.toString(), {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e   = new Error(err.message || res.statusText);
+    e.status  = res.status; e.data = err;
+    throw e;
+  }
+  return res.json();
+}
+
+function bBuildBody() {
+  return {
+    race:             BS.race,
+    raceSource:       BS.raceSource,
+    class:            BS.class,
+    classSource:      BS.classSource,
+    background:       BS.background,
+    backgroundSource: BS.backgroundSource,
+    level:            BS.level,
+    locale:           BS.locale,
+    choices:          BS.choices,
+    spellChoices:     BS.spellChoices,
+    abilityScores:    { method: BS.method, assignments: BS.assignments },
+  };
+}
+
+async function bGenerate() {
+  const errEl = document.getElementById('b-errors');
+  errEl.classList.add('hidden');
+
+  const btn = document.getElementById('b-generate-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generazione…';
+
+  try {
+    // Validate first to surface readable errors
+    const vres = await apiPost('/builds/validate', bBuildBody());
+    if (!vres.valid && vres.errors?.length) {
+      const msgs = vres.errors.slice(0,8).map(e => `• ${esc(e.message || e.code)}`).join('<br>');
+      errEl.innerHTML = `<strong>Errori da correggere:</strong><br>${msgs}`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    const result = await apiPost('/builds/sheet', bBuildBody());
+    if (result.sheet) bRenderSheet(result.sheet);
+
+  } catch(e) {
+    const msg = e.data?.message || e.data?.error || e.message || 'Errore sconosciuto';
+    errEl.innerHTML = `<strong>Errore:</strong> ${esc(msg)}`;
+    errEl.classList.remove('hidden');
+    console.error('Forgia generate error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚒ Genera Scheda';
+  }
+}
+
+// ── Character sheet renderer ────────────────────────────
+
+function bFmtMod(n) {
+  if (n == null) return '—';
+  return n >= 0 ? `+${n}` : `${n}`;
+}
+
+function bRenderSheet(sheet) {
+  const id    = sheet.identity      || {};
+  const abils = sheet.abilities?.abilities || {};   // nested one level deeper
+  const cs    = sheet.combatStats   || {};
+  const ds    = sheet.derivedStats  || {};
+  const profs = sheet.proficiencies || {};
+  const sc    = sheet.spellcasting  || {};
+  const spells = sheet.spells       || {};
+  const wa    = sheet.weaponAttacks?.attacks || [];
+  const sa    = sheet.spellActions?.actions  || [];
+  const res   = sheet.resources     || {};
+  const feats = sheet.features      || {};
+
+  const saves  = ds.savingThrows || {};
+  const skills = ds.skills       || {};
+  const pb     = ds.proficiencyBonus ?? 2;
+
+  const charName  = BS.name || id.name || 'Personaggio';
+  // Identity fields are entity objects { name, ... }, not plain strings
+  const raceName  = id.race?.name      || id.race      || '';
+  const subName   = id.subrace?.name   || id.subrace   || '';
+  const clsName   = id.class?.name     || id.class     || '';
+  const subClsName= id.subclass?.name  || id.subclass  || '';
+  const bgName    = id.background?.name|| id.background|| '';
+  const classLine = [clsName, subClsName].filter(Boolean).join(' — ');
+  const subtitle  = [raceName, subName, classLine, id.level ? `Livello ${id.level}` : '', bgName].filter(Boolean).join('  ·  ');
+
+  const hpMax    = cs.hitPoints?.maximum ?? cs.hitPoints ?? '—';
+  const acVal    = cs.armorClass?.value  ?? cs.armorClass ?? '—';
+  // Speed comes from sheet.speed, not combatStats
+  const spd      = sheet.speed || {};
+  const speedStr = spd.walkLabel || (spd.walk ? (BS.locale === 'it' ? ftToM(spd.walk) + ' m' : spd.walk + ' ft') : '—');
+
+  const el = document.getElementById('b-sheet-content');
+  el.innerHTML = `
+    <div class="char-header-card">
+      <div class="char-name">${esc(charName)}</div>
+      <div class="char-subtitle">${esc(subtitle)}</div>
+    </div>
+
+    <div class="char-stats-grid">
+      ${BSTAT_ORDER.map(stat => {
+        const entry = abils[stat] || {};
+        const score = entry.score ?? 10;
+        const mod   = entry.modifier ?? abModNum(score);
+        return `<div class="char-stat-cell">
+          <div class="char-stat-name">${BSTAT_SHORT[stat]}</div>
+          <div class="char-stat-score">${score}</div>
+          <div class="char-stat-mod">${bFmtMod(mod)}</div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <div class="char-combat-row">
+      <div class="char-combat-cell"><div class="char-combat-label">CA</div><div class="char-combat-val">${acVal}</div></div>
+      <div class="char-combat-cell"><div class="char-combat-label">PF max</div><div class="char-combat-val">${hpMax}</div></div>
+      <div class="char-combat-cell"><div class="char-combat-label">Iniziativa</div><div class="char-combat-val">${bFmtMod(ds.initiative ?? 0)}</div></div>
+      <div class="char-combat-cell"><div class="char-combat-label">Velocità</div><div class="char-combat-val">${speedStr}</div></div>
+      <div class="char-combat-cell"><div class="char-combat-label">Comp.</div><div class="char-combat-val">+${pb}</div></div>
+    </div>
+
+    <div class="char-two-col">
+      <div class="char-section">
+        <div class="char-section-title">Tiri Salvezza</div>
+        <div class="char-save-list">
+          ${BSTAT_ORDER.map(s => {
+            const sv  = saves[s] || {};
+            return `<div class="char-skill-item">
+              <span class="char-prof-dot${sv.proficient?' proficient':''}"></span>
+              <span>${BSTAT_IT[s]}</span>
+              <span class="char-skill-mod">${bFmtMod(sv.modifier ?? 0)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="char-section">
+        <div class="char-section-title">Abilità</div>
+        <div class="char-skill-list">
+          ${BSKILLS_ALL.map(sk => {
+            const sv  = skills[sk.k] || {};
+            const dot = sv.expertise ? 'expert' : sv.proficient ? 'proficient' : '';
+            return `<div class="char-skill-item">
+              <span class="char-prof-dot ${dot}"></span>
+              <span>${BSKILL_IT[sk.k] || sk.k}</span>
+              <span class="char-skill-mod">${bFmtMod(sv.modifier ?? 0)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+
+    ${bSheetProficiencies(profs)}
+    ${bSheetEquipment(sheet.equipment)}
+    ${bSheetFeatures(feats)}
+    ${bSheetSpellcasting(sc, spells)}
+    ${bSheetWeaponAttacks(wa)}
+    ${bSheetSpellActions(sa)}
+    ${bSheetResources(res)}
+  `;
+
+  // Wire up spell chip clicks → open entity
+  el.querySelectorAll('.char-spell-chip[data-id]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const id = chip.dataset.id;
+      if (id) { closeBuilderPanel(); openEntity(id, 'spell'); }
+    });
+  });
+
+  // Show sheet view
+  document.getElementById('b-sheet-char-name').textContent = charName;
+  document.getElementById('b-form-view').classList.add('hidden');
+  document.getElementById('b-sheet-view').classList.remove('hidden');
+  document.getElementById('b-sheet-view').scrollTop = 0;
+}
+
+function bSheetProficiencies(profs) {
+  // Each item is { value, label, sources } — extract label for display
+  const toLabels = arr => (arr || []).map(p => (typeof p === 'object' ? (p.label || p.value) : p));
+  const rows = [
+    { cat:'Armature',   items: toLabels(profs.armor)     },
+    { cat:'Armi',       items: toLabels(profs.weapons)   },
+    { cat:'Strumenti',  items: toLabels(profs.tools)     },
+    { cat:'Lingue',     items: toLabels(profs.languages) },
+  ].filter(r => r.items.length);
+  if (!rows.length) return '';
+  return `<div class="char-section">
+    <div class="char-section-title">Competenze</div>
+    ${rows.map(r => `<div class="char-prof-row"><span class="char-prof-cat">${esc(r.cat)}</span>${esc(r.items.join(', '))}</div>`).join('')}
+  </div>`;
+}
+
+function bSheetEquipment(equip) {
+  const items = equip?.selectedItems || equip?.items || [];
+  if (!items.length) return '';
+  return `<div class="char-section">
+    <div class="char-section-title">Equipaggiamento</div>
+    <div class="char-equip-list">
+      ${items.map(it => {
+        const inner = it.item || it;
+        const name  = inner.name || inner.originalName || inner.id || '?';
+        const qty   = it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : '';
+        return `<div class="char-equip-item">${esc(name)}${qty}</div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+// Normalise a feature entry block (which may have an `entries` array of strings/objects)
+// into { name, body } for display.
+function bNormFeature(f) {
+  if (!f || typeof f !== 'object') return { name: String(f), body: '' };
+  const name = f.name || f.originalName || f.label || '';
+  // `entries` is the 5etools content array — grab first string element as body
+  let body = '';
+  if (typeof f.content === 'string')     body = f.content;
+  else if (typeof f.description === 'string') body = f.description;
+  else if (Array.isArray(f.entries)) {
+    body = f.entries.map(e => (typeof e === 'string' ? e : (e.entries?.[0] || ''))).join(' ');
+  }
+  return { name, body };
+}
+// Flatten a trait block that may be { entries:[{name, entries:[]}] }, { names:[] }, or a plain array
+function bFlatTraits(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw.entries)) return raw.entries;
+  // backgroundFeatures has .names[] listing feature names
+  if (Array.isArray(raw.names)) return raw.names.map(n => ({ name: n }));
+  return [];
+}
+
+function bSheetFeatures(feats) {
+  const groups = [
+    { lbl:'Tratti di Razza',      list: bFlatTraits(feats.raceTraits)    },
+    { lbl:'Tratti di Sottorazza', list: bFlatTraits(feats.subraceTraits) },
+    // classFeatures is { known:[], atLevel:[] }
+    { lbl:'Capacità di Classe',   list: feats.classFeatures?.known || feats.classFeatures?.atLevel || [] },
+    { lbl:'Background',           list: bFlatTraits(feats.backgroundFeatures) },
+    { lbl:'Imprese',              list: feats.feats           || [] },
+    { lbl:'Capacità Opzionali',   list: feats.optionalFeatures || [] },
+  ].filter(g => g.list.length);
+  if (!groups.length) return '';
+
+  return `<div class="char-section">
+    <div class="char-section-title">Caratteristiche & Tratti</div>
+    ${groups.map(g => `
+      <div class="char-feat-group">
+        <div class="char-feat-group-title">${esc(g.lbl)}</div>
+        ${g.list.map(f => {
+          const { name, body } = bNormFeature(f);
+          return `<div class="char-feature">
+            ${name ? `<div class="char-feature-name">${esc(name)}</div>` : ''}
+            ${body ? `<div class="char-feature-body">${esc(body.substring(0,300))}${body.length>300?'…':''}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+  </div>`;
+}
+
+function bSheetSpellcasting(sc, spells) {
+  if (!sc?.ability) return '';
+  const slots   = sc.spellSlots || {};
+  const cantrips = spells.cantrips || [];
+  const leveled  = spells.leveled  || {};
+  const hasAnything = cantrips.length || Object.values(leveled).some(l => l?.length);
+  if (!hasAnything && !Object.values(slots).some(n => n > 0)) return '';
+
+  return `<div class="char-section">
+    <div class="char-section-title">Magia</div>
+    <div class="char-spell-stats">
+      <span>Caratteristica: <strong>${BSTAT_IT[sc.ability] || sc.ability}</strong></span>
+      ${sc.spellSaveDc       ? `<span>CD: <strong>${sc.spellSaveDc}</strong></span>` : ''}
+      ${sc.spellAttackBonus != null ? `<span>Attacco: <strong>${bFmtMod(sc.spellAttackBonus)}</strong></span>` : ''}
+    </div>
+    ${Object.entries(slots).filter(([,n]) => n > 0).length ? `
+    <div class="char-slot-row">
+      ${Object.entries(slots).filter(([,n]) => n > 0).map(([lvl, n]) =>
+        `<div class="char-slot-group"><div class="char-slot-level">Liv. ${lvl}</div><div class="char-slot-count">${n}</div></div>`
+      ).join('')}
+    </div>` : ''}
+    ${cantrips.length ? `<div class="char-spell-level">
+      <div class="char-spell-level-title">Trucchi</div>
+      <div class="char-spell-chips">${cantrips.map(s => `<span class="char-spell-chip" data-id="${esc(s.id)}">${esc(s.name || s.originalName)}</span>`).join('')}</div>
+    </div>` : ''}
+    ${Object.entries(leveled).filter(([,l]) => l?.length).map(([lvl, list]) =>
+      `<div class="char-spell-level">
+        <div class="char-spell-level-title">Livello ${lvl}</div>
+        <div class="char-spell-chips">${list.map(s => `<span class="char-spell-chip" data-id="${esc(s.id)}">${esc(s.name || s.originalName)}</span>`).join('')}</div>
+      </div>`).join('')}
+  </div>`;
+}
+
+function bSheetWeaponAttacks(attacks) {
+  if (!attacks.length) return '';
+  return `<div class="char-section">
+    <div class="char-section-title">Attacchi con Arma</div>
+    <div class="char-attack-list">
+      ${attacks.map(a => `<div class="char-attack-row">
+        <span class="char-attack-name">${esc(a.name || a.weaponName || '—')}</span>
+        <span class="char-attack-bonus">${bFmtMod(a.attackBonus)}</span>
+        <span class="char-attack-damage">${esc(a.damage || '—')}</span>
+        <span class="char-attack-type">${esc(a.damageType || '')}</span>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function bSheetSpellActions(actions) {
+  if (!actions.length) return '';
+  return `<div class="char-section">
+    <div class="char-section-title">Azioni da Incantesimo</div>
+    <div class="char-attack-list">
+      ${actions.map(a => {
+        const d = a.displayLabels || {};
+        const line2 = [d.attack, d.save, d.damage, d.healing].filter(Boolean).join('  ·  ');
+        return `<div class="char-attack-row">
+          <span class="char-attack-name">${esc(a.name || a.id || '—')}</span>
+          <span class="char-attack-bonus">${esc(d.activation || '')}</span>
+          <span class="char-attack-damage">${esc(line2)}</span>
+          <span class="char-attack-type"></span>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function bSheetResources(res) {
+  // resourcePools is { pools: [{key, label, die, max, recharge, ...}], ... }
+  const pools = res.resourcePools?.pools || [];
+  if (!pools.length) return '';
+  return `<div class="char-section">
+    <div class="char-section-title">Risorse</div>
+    <div class="char-slot-row">
+      ${pools.map(pool => `<div class="char-slot-group">
+        <div class="char-slot-level">${esc(pool.label || pool.key)}</div>
+        <div class="char-slot-count">${pool.unlimited ? '∞' : pool.max ?? '?'}</div>
+        ${pool.die      ? `<div class="char-slot-die">${esc(pool.die)}</div>` : ''}
+        ${pool.recharge ? `<div class="char-slot-recharge">${esc(pool.recharge)}</div>` : ''}
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ── Builder init & event wiring (called from init()) ────
+
+function initBuilder() {
+  bsLoad();
+
+  const D_builder = {
+    toggleBtn:  document.getElementById('builder-toggle-btn'),
+    closeBtn:   document.getElementById('builder-close-btn'),
+    resetBtn:   document.getElementById('b-reset-btn'),
+    loadBtn:    document.getElementById('b-load-btn'),
+    generateBtn:document.getElementById('b-generate-btn'),
+    backBtn:    document.getElementById('b-back-btn'),
+    raceEl:     document.getElementById('b-race'),
+    classEl:    document.getElementById('b-class'),
+    bgEl:       document.getElementById('b-background'),
+    levelEl:    document.getElementById('b-level'),
+    nameEl:     document.getElementById('b-name'),
+  };
+
+  D_builder.toggleBtn?.addEventListener('click', toggleBuilderPanel);
+  D_builder.closeBtn?.addEventListener('click', closeBuilderPanel);
+
+  D_builder.resetBtn?.addEventListener('click', () => {
+    if (!confirm('Azzerare tutta la Forgia del PG?')) return;
+    BD  = null;
+    BS  = bsDefault();
+    bsSave();
+    bRenderForm();
+  });
+
+  D_builder.loadBtn?.addEventListener('click', bLoadChoices);
+  D_builder.generateBtn?.addEventListener('click', bGenerate);
+  D_builder.backBtn?.addEventListener('click', () => {
+    document.getElementById('b-sheet-view').classList.add('hidden');
+    document.getElementById('b-form-view').classList.remove('hidden');
+  });
+
+  // Identity selects
+  D_builder.raceEl?.addEventListener('change', e => {
+    const [slug, src] = e.target.value.split('|');
+    BS.race = slug || ''; BS.raceSource = src || '';
+    BD = null; bsSave();
+    document.getElementById('b-sec-scores').classList.add('hidden');
+    document.getElementById('b-sec-choices').classList.add('hidden');
+    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-generate-row').classList.add('hidden');
+  });
+  D_builder.classEl?.addEventListener('change', e => {
+    const [slug, src] = e.target.value.split('|');
+    BS.class = slug || ''; BS.classSource = src || '';
+    BD = null; bsSave();
+    document.getElementById('b-sec-scores').classList.add('hidden');
+    document.getElementById('b-sec-choices').classList.add('hidden');
+    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-generate-row').classList.add('hidden');
+  });
+  D_builder.bgEl?.addEventListener('change', e => {
+    const [slug, src] = e.target.value.split('|');
+    BS.background = slug || ''; BS.backgroundSource = src || '';
+    BD = null; bsSave();
+    document.getElementById('b-sec-scores').classList.add('hidden');
+    document.getElementById('b-sec-choices').classList.add('hidden');
+    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-generate-row').classList.add('hidden');
+  });
+  D_builder.levelEl?.addEventListener('change', e => {
+    BS.level = Math.max(1, Math.min(20, +e.target.value || 1));
+    BD = null; bsSave();
+  });
+  D_builder.nameEl?.addEventListener('input', e => { BS.name = e.target.value; bsSave(); });
+
+  // Locale buttons
+  document.querySelectorAll('[data-b-locale]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      BS.locale = btn.dataset.bLocale;
+      document.querySelectorAll('[data-b-locale]').forEach(b =>
+        b.classList.toggle('active', b.dataset.bLocale === BS.locale)
+      );
+      BD = null; BL = null; // reload lists & draft for new locale
+      bsSave();
+      bLoadLists();
+    });
+  });
+
+  // Score method radios
+  document.querySelectorAll('[name=b-method]').forEach(r => {
+    r.addEventListener('change', () => {
+      BS.method = r.value;
+      // Reset to neutral when switching methods
+      if (r.value === 'standardArray') {
+        BS.assignments = { str:15, dex:14, con:13, int:12, wis:10, cha:8 };
+      } else if (r.value === 'pointBuy') {
+        BS.assignments = { str:8, dex:8, con:8, int:8, wis:8, cha:8 };
+      }
+      bsSave(); bRenderScoreInputs();
+    });
+  });
+}
+
 // tag & image click delegation
 document.addEventListener('click', e => {
   // chiude la tavolozza colori della plancia se si clicca fuori da bottone/popover
@@ -3368,6 +4366,9 @@ async function init() {
     renderBoard();
   });
 
+  // Forgia del Personaggio
+  initBuilder();
+
   // Libro degli Incantesimi: ripristina lo stato da una sessione precedente
   S.spellbook = loadSpellbook();
   updateSpellbookToggleUi();
@@ -3477,6 +4478,7 @@ async function init() {
       if (D.app.classList.contains('show-sidebar')) { closeSidebarDrawer(); return; }
       if (D.app.classList.contains('board-focus')) { setBoardFocus(false); return; }
       if (D.app.classList.contains('show-board')) { closeBoard(); return; }
+      if (D.app.classList.contains('show-builder')) { closeBuilderPanel(); return; }
       if (S.filtersOpen) { closeFiltersDialog(); return; }
       D.app.classList.remove('show-detail');
     }

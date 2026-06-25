@@ -49,6 +49,11 @@
         <span id="spellbook-toggle-count" class="spellbook-toggle-count hidden">0</span>
       </button>
 
+      <button id="builder-toggle-btn" class="builder-toggle-btn" type="button" title="Forgia del Personaggio">
+        <span class="builder-toggle-icon">⚒</span>
+        <span class="builder-toggle-label">Forgia PG</span>
+      </button>
+
       <div class="sidebar-sec-label">Compendio</div>
       <ul id="category-list" class="category-list"></ul>
 
@@ -112,6 +117,104 @@
       </div>
       <div id="board-cards" class="board-cards">
         <div class="board-empty-msg">Nessuna entità sulla plancia.<br>Apri una scheda e clicca «📌 Plancia» per aggiungerla qui.</div>
+      </div>
+    </div>
+
+    <!-- Builder Panel — Forgia del Personaggio -->
+    <div id="builder-panel" class="builder-panel">
+      <div class="builder-header">
+        <h2 class="builder-title">⚒ Forgia del Personaggio</h2>
+        <div class="builder-header-right">
+          <button id="b-reset-btn" class="btn-ghost" type="button">Azzera</button>
+          <button id="builder-close-btn" class="icon-btn" type="button" title="Chiudi">✕</button>
+        </div>
+      </div>
+
+      <div id="b-loading" class="b-loading hidden">
+        <div class="spinner"></div><span>Caricamento dati…</span>
+      </div>
+
+      <!-- FORM VIEW -->
+      <div id="b-form-view" class="b-scroll-view">
+        <div class="b-form-content">
+
+          <div id="b-errors" class="b-errors hidden"></div>
+
+          <!-- § Identità -->
+          <div class="b-section">
+            <div class="b-section-title">Identità</div>
+            <div class="b-field">
+              <label class="b-label">Nome (opzionale)</label>
+              <input type="text" id="b-name" class="b-input" placeholder="Il tuo personaggio…" autocomplete="off">
+            </div>
+            <div class="b-row">
+              <div class="b-field">
+                <label class="b-label">Razza</label>
+                <select id="b-race" class="b-select"><option value="">— Caricamento —</option></select>
+              </div>
+              <div class="b-field">
+                <label class="b-label">Classe</label>
+                <select id="b-class" class="b-select"><option value="">— Caricamento —</option></select>
+              </div>
+              <div class="b-field">
+                <label class="b-label">Background</label>
+                <select id="b-background" class="b-select"><option value="">— Caricamento —</option></select>
+              </div>
+            </div>
+            <div class="b-row b-row--narrow">
+              <div class="b-field">
+                <label class="b-label">Livello</label>
+                <input type="number" id="b-level" class="b-input b-input--sm" min="1" max="20" value="1">
+              </div>
+              <div class="b-field">
+                <label class="b-label">Lingua scheda</label>
+                <div class="b-locale-row">
+                  <button class="locale-btn active" data-b-locale="it">🇮🇹 IT</button>
+                  <button class="locale-btn" data-b-locale="en">🇬🇧 EN</button>
+                </div>
+              </div>
+            </div>
+            <button id="b-load-btn" class="btn-primary" type="button">Carica Scelte →</button>
+          </div>
+
+          <!-- § Punteggi Caratteristica (hidden until draft loaded) -->
+          <div class="b-section hidden" id="b-sec-scores">
+            <div class="b-section-title">Punteggi Caratteristica</div>
+            <div class="b-method-row">
+              <label class="b-radio-label"><input type="radio" name="b-method" value="standardArray"> Array Standard</label>
+              <label class="b-radio-label"><input type="radio" name="b-method" value="pointBuy"> Point Buy (27pt)</label>
+              <label class="b-radio-label"><input type="radio" name="b-method" value="manual"> Manuale</label>
+            </div>
+            <div id="b-scores-ui"></div>
+          </div>
+
+          <!-- § Scelte (hidden until draft loaded) -->
+          <div class="b-section hidden" id="b-sec-choices">
+            <div class="b-section-title">Scelte</div>
+            <div id="b-choices-ui"></div>
+          </div>
+
+          <!-- § Magia (hidden until draft loaded, if caster) -->
+          <div class="b-section hidden" id="b-sec-spells">
+            <div class="b-section-title">Magia</div>
+            <div id="b-spells-ui"></div>
+          </div>
+
+          <!-- Genera row (hidden until draft loaded) -->
+          <div id="b-generate-row" class="b-generate-row hidden">
+            <button id="b-generate-btn" class="btn-primary b-generate-btn" type="button">⚒ Genera Scheda</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- SHEET VIEW (hidden until generated) -->
+      <div id="b-sheet-view" class="b-scroll-view hidden">
+        <div class="b-sheet-bar">
+          <button id="b-back-btn" class="btn-ghost" type="button">← Modifica</button>
+          <span id="b-sheet-char-name" class="b-sheet-char-name"></span>
+        </div>
+        <div id="b-sheet-content" class="b-sheet-content"></div>
       </div>
     </div>
 

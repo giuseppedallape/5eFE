@@ -1,0 +1,1544 @@
+openapi: 3.1.0
+
+info:
+  title: Nuovo5e API
+  version: 0.1.0
+  summary: REST API for the Nuovo5e D&D 5e compendium.
+  description: |
+    Nuovo5e exposes normalized D&D 5e compendium data imported from 5e.tools,
+    persisted in MongoDB, translated through an offline pipeline, and consumed
+    by a modern frontend.
+
+    The API is currently optimized for the Nuovo5e frontend, but it is designed
+    to become a stable data API.
+
+    Important conventions:
+
+    - Prefer full entity IDs over slug-based routes.
+    - Slugs are not globally unique.
+    - `content.en` is the canonical original source.
+    - `content.it` is the persisted Italian translation.
+    - `locale=it` projects localized fields into `name` and `content.localized`.
+    - Deprecated legacy documents should not be shown in list/search responses.
+
+servers:
+  - url: http://localhost:3333/api
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Service health and diagnostics.
+  - name: Stats
+    description: Database statistics.
+  - name: Search
+    description: Global entity search.
+  - name: Entities
+    description: Generic entity list and detail endpoints.
+  - name: Classes
+    description: Aggregated class data and class progression.
+  - name: Builds
+    description: |
+      Character builder endpoints (race/class/background/spell/ability-score
+      choices, validation, and full sheet resolution).
+
+      These endpoints are reverse-engineered from `src/api/build-*.mjs` and
+      `src/routes/api.mjs` rather than designed top-down — see
+      `docs/build-frontend-readiness.md` and `docs/pg-builder-roadmap.md` for
+      known gaps (multiclass, subraces, ASI vs feat, class resource pools are
+      not yet supported).
+  - name: Sources
+    description: Source/manual metadata.
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      operationId: getHealth
+      summary: Health check.
+      description: Returns a minimal status payload to confirm that the API server is running.
+      responses:
+        "200":
+          description: API is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                ok:
+                  value:
+                    ok: true
+                    service: nuovo5e-api
+
+  /stats:
+    get:
+      tags:
+        - Stats
+      operationId: getStats
+      summary: Get global database statistics.
+      description: |
+        Returns total entity counts and translated entity counts grouped by entity type.
+      responses:
+        "200":
+          description: Database statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+              examples:
+                sample:
+                  value:
+                    total: 7773
+                    translated: 7773
+                    byType:
+                      spell: 525
+                      monster: 3808
+                      item: 1640
+                      class: 17
+                    translatedByType:
+                      spell: 525
+                      monster: 3808
+                      item: 1640
+                      class: 17
+        "500":
+          $ref: "#/components/responses/StatsError"
+
+  /search:
+    get:
+      tags:
+        - Search
+      operationId: searchEntities
+      summary: Search entities by name.
+      description: |
+        Performs a case-insensitive regex search over entity names and slugs.
+
+        Current searched fields:
+
+        - `name`
+        - `slug`
+        - `content.en.name`
+        - `content.it.name`
+
+        This is not currently full-text search over all entries.
+
+        For frontend navigation, use the returned `id` and link to `/entity/:encodedId`
+        rather than using `entityType` + `slug`, because slugs can collide.
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/LocaleQuery"
+        - $ref: "#/components/parameters/EntityTypeQueryOptional"
+        - $ref: "#/components/parameters/SourceQueryOptional"
+        - $ref: "#/components/parameters/SearchLimitQuery"
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+              examples:
+                fireball:
+                  value:
+                    query: fireball
+                    results:
+                      - id: spell:phb:fireball
+                        entityType: spell
+                        source: PHB
+                        name: Palla di Fuoco
+                        originalName: Fireball
+                        slug: fireball
+                        hasTranslation: true
+                        hasItalian: true
+        "500":
+          $ref: "#/components/responses/SearchError"
+
+  /entities:
+    get:
+      tags:
+        - Entities
+      operationId: listEntities
+      summary: List entities.
+      description: |
+        Returns a paginated list of entities.
+
+        Supports optional filtering by `type` and `source`.
+
+        Recommended frontend behavior:
+        use the returned `id` for navigation because `slug` is not globally unique.
+      parameters:
+        - $ref: "#/components/parameters/EntityTypeQueryOptional"
+        - $ref: "#/components/parameters/SourceQueryOptional"
+        - $ref: "#/components/parameters/LocaleQuery"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/ListLimitQuery"
+      responses:
+        "200":
+          description: Paginated entity list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityListResponse"
+              examples:
+                spells:
+                  value:
+                    page: 1
+                    limit: 60
+                    total: 525
+                    totalPages: 9
+                    results:
+                      - id: spell:phb:fireball
+                        entityType: spell
+                        source: PHB
+                        name: Palla di Fuoco
+                        originalName: Fireball
+                        slug: fireball
+                        hasTranslation: true
+                        hasItalian: true
+        "500":
+          $ref: "#/components/responses/EntitiesError"
+
+  /entities/{id}:
+    get:
+      tags:
+        - Entities
+      operationId: getEntityById
+      summary: Get entity detail by full entity ID.
+      description: |
+        Loads an entity by its full `_id`.
+
+        This is the preferred detail endpoint because it avoids slug collisions.
+
+        Examples:
+
+        - `spell:phb:fireball`
+        - `monster:mm:goblin`
+        - `monster:mpmm:goblin`
+        - `classFeature:phb:wizard:spellcasting`
+
+        In URLs, clients should URL-encode `:` as `%3A`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Full entity ID.
+          schema:
+            type: string
+          examples:
+            spell:
+              value: spell:phb:fireball
+            monster:
+              value: monster:mm:goblin
+            classFeature:
+              value: classFeature:phb:wizard:spellcasting
+        - $ref: "#/components/parameters/LocaleQuery"
+      responses:
+        "200":
+          description: Entity detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityDetail"
+              examples:
+                spell:
+                  value:
+                    id: spell:phb:fireball
+                    entityType: spell
+                    source: PHB
+                    name: Palla di Fuoco
+                    originalName: Fireball
+                    slug: fireball
+                    hasTranslation: true
+                    hasItalian: true
+                    normalized:
+                      level: 3
+                      school: V
+                    content:
+                      localized:
+                        name: Palla di Fuoco
+                        entries:
+                          - "Una brillante scia lampeggia..."
+                      english:
+                        name: Fireball
+                        entries:
+                          - "A bright streak flashes..."
+                    raw5e:
+                      name: Fireball
+                      source: PHB
+        "404":
+          $ref: "#/components/responses/EntityNotFound"
+        "500":
+          $ref: "#/components/responses/EntityDetailError"
+
+  /entities/{entityType}/{slug}:
+    get:
+      tags:
+        - Entities
+      operationId: getEntityByTypeAndSlug
+      summary: Get entity detail by entity type and slug.
+      description: |
+        Loads an entity by `entityType` and `slug`.
+
+        This endpoint is convenient but can be ambiguous because slugs are not globally unique.
+
+        For robust frontend navigation, prefer:
+
+        `GET /entities/{id}`
+
+        Known ambiguous examples:
+
+        - `monster/goblin`
+        - `classFeature/spellcasting`
+        - `classFeature/ability-score-improvement`
+      parameters:
+        - name: entityType
+          in: path
+          required: true
+          description: Entity type.
+          schema:
+            $ref: "#/components/schemas/EntityType"
+        - name: slug
+          in: path
+          required: true
+          description: Entity slug.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/LocaleQuery"
+      responses:
+        "200":
+          description: Entity detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityDetail"
+        "400":
+          $ref: "#/components/responses/InvalidEntityType"
+        "404":
+          $ref: "#/components/responses/EntityNotFound"
+        "500":
+          $ref: "#/components/responses/EntityDetailError"
+
+  /classes/{slug}:
+    get:
+      tags:
+        - Classes
+      operationId: getClassAggregate
+      summary: Get aggregated class data.
+      description: |
+        Returns a class entity plus its resolved level progression.
+
+        Classes are special because their detail document may have little or no
+        `content.entries`; the official progression is read from:
+
+        `class.raw5e.classFeatures`
+
+        Each class feature reference is resolved into a class-aware feature ID such as:
+
+        `classFeature:phb:wizard:spellcasting`
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Class slug.
+          schema:
+            type: string
+          examples:
+            wizard:
+              value: wizard
+            barbarian:
+              value: barbarian
+        - $ref: "#/components/parameters/LocaleQuery"
+      responses:
+        "200":
+          description: Aggregated class data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassAggregate"
+              examples:
+                wizard:
+                  value:
+                    class:
+                      id: class:phb:wizard
+                      entityType: class
+                      source: PHB
+                      name: Mago
+                      originalName: Wizard
+                      slug: wizard
+                      hasTranslation: true
+                      hasItalian: true
+                      normalized:
+                        source: PHB
+                        prerequisite: []
+                      content:
+                        localized:
+                          name: Mago
+                        english:
+                          name: Wizard
+                          entries: []
+                      raw5e:
+                        name: Wizard
+                        source: PHB
+                        hd:
+                          number: 1
+                          faces: 6
+                    progression:
+                      - id: classFeature:phb:wizard:spellcasting
+                        slug: spellcasting
+                        source: PHB
+                        level: 1
+                        className: Wizard
+                        name: Incantesimi
+                        originalName: Spellcasting
+                        gainSubclassFeature: false
+                        exists: true
+        "404":
+          description: Class not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value:
+                    error: CLASS_NOT_FOUND
+        "500":
+          description: Class route error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  value:
+                    error: CLASS_ROUTE_ERROR
+
+  /builds/draft:
+    get:
+      tags:
+        - Builds
+      operationId: getBuildDraft
+      summary: Get the choice manifest for a race/class/background combination.
+      description: |
+        Returns the resolved builder data (race builder, class builder,
+        background builder) plus two compact choice manifests that a
+        frontend can render as a form:
+
+        - `choiceManifest`: non-spell choices (skills, languages, tools,
+          ability score choices granted by race, subrace, starting equipment,
+          subclass, ability score improvement (`+2`/`+1+1`/feat at the levels
+          where the class grants it), optional feature progressions such as
+          Fighting Style).
+        - `spellChoiceManifest`: cantrips/known/prepared/pact spell choices,
+          including spell-level constraints and whether the choice is
+          deferred (e.g. a prepared-caster's spell list, which depends on
+          ability scores resolved later).
+
+        `class`, `background` and `subclass` are optional: omitting them
+        still returns the race-only or race+class manifest. Submit the
+        resulting choice IDs back via `POST /builds/validate` or
+        `POST /builds/sheet`.
+
+        Multiclassing: pass `classes` (a JSON-encoded array, e.g.
+        `[{"slug":"fighter","source":"PHB","level":3,"subclass":"champion"},
+        {"slug":"wizard","source":"PHB","level":2}]`) instead of `class`/
+        `classSource`/`subclass`/`level` when the character has 2+ classes.
+        The first array entry is the starting class (the only one that gets
+        starting equipment). One of `class` or `classes` is required.
+      parameters:
+        - name: race
+          in: query
+          required: true
+          schema:
+            type: string
+          examples:
+            elf:
+              value: elf
+        - name: raceSource
+          in: query
+          required: true
+          schema:
+            type: string
+          examples:
+            phb:
+              value: PHB
+        - name: class
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Single-class slug. Mutually exclusive with `classes`; one of the two is required.
+        - name: classSource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subclass
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: classes
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            JSON-encoded array for multiclass builds:
+            `[{"slug": "fighter", "source": "PHB", "level": 3, "subclass": "champion"}, ...]`.
+            Mutually exclusive with `class`/`classSource`/`subclass`/`level`;
+            one of `class` or `classes` is required.
+          examples:
+            fighterWizard:
+              value: '[{"slug":"fighter","source":"PHB","level":3},{"slug":"wizard","source":"PHB","level":2}]'
+        - name: background
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: backgroundSource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: level
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 1
+        - $ref: "#/components/parameters/LocaleQuery"
+      responses:
+        "200":
+          description: Resolved builder data and choice manifests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildDraftResponse"
+        "400":
+          description: Missing or invalid race/class/background parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Race, class, subclass or background not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /builds/validate:
+    post:
+      tags:
+        - Builds
+      operationId: validateBuild
+      summary: Validate a set of build choices without resolving a full sheet.
+      description: |
+        Validates `choices`, `spellChoices` and `abilityScores` against the
+        choice manifests for the given race/class/background/level. Returns
+        structured errors/warnings instead of throwing on invalid input,
+        except for two specific hard-failure cases (missing required spell
+        choices) which return HTTP 422 with the error envelope at the top
+        level — **the response shape differs between the soft and hard
+        failure cases**, frontends must handle both:
+
+        - Soft failures: HTTP 200, `{ valid: false, errors: [...] }`.
+        - Hard failures (e.g. missing required spell choice): HTTP 422,
+          `{ error: "BUILD_SPELL_CHOICES_INVALID", valid: false, errors: [...] }`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildValidateRequest"
+      responses:
+        "200":
+          description: "Validation result (may still be `valid: false`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildValidateResponse"
+        "422":
+          description: Hard validation failure (e.g. missing required spell choices).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildValidateResponse"
+
+  /builds/sheet:
+    post:
+      tags:
+        - Builds
+      operationId: resolveBuildSheet
+      summary: Resolve a full character sheet from build choices.
+      description: |
+        Validates the same payload as `POST /builds/validate` and, when
+        valid, resolves a complete character sheet: identity, ability
+        scores/bonuses, proficiencies, equipment (including resolved
+        equipment selectors via `selectorChoices`), spellcasting, known/
+        prepared spells, derived stats, combat stats, weapon attacks, spell
+        actions, a unified action list, and resource usage.
+
+        On invalid input this returns HTTP 422 with
+        `{ error: "BUILD_CHOICES_INVALID" | "BUILD_SPELL_CHOICES_INVALID", valid: false, errors: [...] }`
+        instead of a `sheet`.
+
+        Known data gaps that surface as warnings rather than hard errors:
+        items missing from the database produce a `SYNTHETIC_ITEM_SELECTED`
+        warning with placeholder item data; unresolved equipment selectors
+        produce `EQUIPMENT_SELECTOR_REQUIRES_RESOLUTION`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildSheetRequest"
+      responses:
+        "200":
+          description: Resolved character sheet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildSheetResponse"
+        "422":
+          description: Invalid choices, spell choices, or ability scores.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildSheetResponse"
+
+  /sources:
+    get:
+      tags:
+        - Sources
+      operationId: listSources
+      summary: List available sources.
+      description: |
+        Returns distinct source codes.
+
+        This endpoint may be implemented or planned depending on the current backend branch.
+        The frontend may also use a curated list instead of exposing every source.
+      parameters:
+        - $ref: "#/components/parameters/EntityTypeQueryOptional"
+      responses:
+        "200":
+          description: Source list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcesResponse"
+              examples:
+                sources:
+                  value:
+                    sources:
+                      - DMG
+                      - EEPC
+                      - MM
+                      - MPMM
+                      - PHB
+                      - SCAG
+                      - TCE
+                      - XGE
+        "500":
+          description: Unable to load sources.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  value:
+                    error: SOURCES_ERROR
+                    message: Unable to load sources
+
+components:
+  parameters:
+    LocaleQuery:
+      name: locale
+      in: query
+      required: false
+      description: Locale used for localized name/content projection.
+      schema:
+        type: string
+        enum:
+          - en
+          - it
+        default: en
+
+    SearchQuery:
+      name: q
+      in: query
+      required: true
+      description: Search query.
+      schema:
+        type: string
+        minLength: 1
+
+    EntityTypeQueryOptional:
+      name: type
+      in: query
+      required: false
+      description: Optional entity type filter.
+      schema:
+        $ref: "#/components/schemas/EntityType"
+
+    SourceQueryOptional:
+      name: source
+      in: query
+      required: false
+      description: Optional source/manual filter. Usually uppercase.
+      schema:
+        type: string
+        examples:
+          - PHB
+          - MM
+          - MPMM
+
+    SearchLimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Max search results. Backend caps this value.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+
+    ListLimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Results per page. Backend caps this value.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+
+    PageQuery:
+      name: page
+      in: query
+      required: false
+      description: Page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+  schemas:
+    EntityType:
+      type: string
+      enum:
+        - background
+        - class
+        - classFeature
+        - conditionDisease
+        - feat
+        - item
+        - itemBase
+        - monster
+        - spell
+        - subclass
+        - subclassFeature
+        - race
+        - subrace
+
+    HealthResponse:
+      type: object
+      required:
+        - ok
+        - service
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+
+    StatsResponse:
+      type: object
+      required:
+        - total
+        - translated
+        - byType
+        - translatedByType
+      properties:
+        total:
+          type: integer
+        translated:
+          type: integer
+        byType:
+          type: object
+          additionalProperties:
+            type: integer
+        translatedByType:
+          type: object
+          additionalProperties:
+            type: integer
+
+    EntityListItem:
+      type: object
+      required:
+        - id
+        - entityType
+        - source
+        - name
+        - originalName
+        - slug
+        - hasTranslation
+        - hasItalian
+      properties:
+        id:
+          type: string
+          examples:
+            - spell:phb:fireball
+            - monster:mm:goblin
+            - classFeature:phb:wizard:spellcasting
+        entityType:
+          $ref: "#/components/schemas/EntityType"
+        source:
+          type: string
+          examples:
+            - PHB
+            - MM
+            - MPMM
+        name:
+          type: string
+          description: Localized name according to `locale`.
+        originalName:
+          type: string
+          description: Original English name.
+        slug:
+          type: string
+        hasTranslation:
+          type: boolean
+        hasItalian:
+          type: boolean
+
+    EntityDetail:
+      type: object
+      required:
+        - id
+        - entityType
+        - source
+        - name
+        - originalName
+        - slug
+        - hasTranslation
+        - hasItalian
+        - normalized
+        - content
+      properties:
+        id:
+          type: string
+        entityType:
+          $ref: "#/components/schemas/EntityType"
+        source:
+          type: string
+        name:
+          type: string
+          description: Localized name according to `locale`.
+        originalName:
+          type: string
+        slug:
+          type: string
+        hasTranslation:
+          type: boolean
+        hasItalian:
+          type: boolean
+        normalized:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        content:
+          $ref: "#/components/schemas/LocalizedContentEnvelope"
+        raw5e:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: Original 5e.tools payload, preserved for advanced renderers and debugging.
+
+    LocalizedContentEnvelope:
+      type: object
+      required:
+        - localized
+        - english
+      properties:
+        localized:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: Requested locale content, with fallback to English.
+        english:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: Original English content.
+
+    SearchResponse:
+      type: object
+      required:
+        - query
+        - results
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntityListItem"
+
+    EntityListResponse:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+        - results
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntityListItem"
+
+    ClassAggregate:
+      type: object
+      required:
+        - class
+        - progression
+      properties:
+        class:
+          allOf:
+            - $ref: "#/components/schemas/EntityDetail"
+          description: Class entity detail.
+        progression:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClassProgressionItem"
+
+    ClassProgressionItem:
+      type: object
+      required:
+        - id
+        - slug
+        - source
+        - level
+        - className
+        - name
+        - originalName
+        - gainSubclassFeature
+        - exists
+      properties:
+        id:
+          type:
+            - string
+            - "null"
+          description: Resolved full classFeature ID, if found.
+          examples:
+            - classFeature:phb:wizard:spellcasting
+        slug:
+          type: string
+        source:
+          type: string
+        level:
+          type: integer
+          minimum: 1
+          maximum: 20
+        className:
+          type:
+            - string
+            - "null"
+          description: Original class name from raw 5e reference.
+        name:
+          type: string
+          description: Localized feature name.
+        originalName:
+          type: string
+        gainSubclassFeature:
+          type: boolean
+        exists:
+          type: boolean
+          description: Whether the referenced feature was resolved in MongoDB.
+
+    ChoiceManifest:
+      type: object
+      description: |
+        Compact, frontend-renderable list of non-spell choices still to be
+        made (skills, languages, tools, race ability bonuses, starting
+        equipment, subclass, optional feature progressions).
+      properties:
+        choices:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - scope
+              - category
+              - kind
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+                description: |
+                  Stable choice ID to use as a key in `choices` when calling
+                  `/builds/validate` or `/builds/sheet`, e.g.
+                  `class.skills.0`, `background.languages.0`,
+                  `class.startingEquipment.2`, `class.optionalFeatures.0`.
+                  Multiclass (2+ classes): every `class.*` id is prefixed
+                  with that class's slug, e.g. `class.fighter.subclass`,
+                  `class.rogue.multiclassSkills.0` (the "pick one skill"
+                  grant some classes give on multiclassing into them) —
+                  single-class ids are unprefixed, as above.
+              scope:
+                type: string
+                enum: [race, class, subclass, background]
+              category:
+                type: string
+                examples:
+                  - skills
+                  - languages
+                  - tools
+                  - abilities
+                  - startingEquipment
+                  - optionalFeatures
+              kind:
+                type: string
+              count:
+                type:
+                  - integer
+                  - "null"
+                description: Number of values required, when fixed.
+              options:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        summary:
+          type: object
+          additionalProperties: true
+
+    SpellChoiceManifest:
+      type: object
+      description: |
+        Compact list of spell-related choices (cantrips known, spells
+        known/prepared, pact magic). Some entries are `deferred: true`
+        (e.g. a prepared caster's spell list depends on ability scores
+        resolved separately) and must not be treated as required upfront.
+      properties:
+        choices:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - kind
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+                examples:
+                  - class.spells.cantrips
+                  - class.spells.known
+                  - class.spells.prepared
+                  - class.wizard.spells.cantrips
+                  - class.wizard.spells.spellbook.level2
+                description: |
+                  Multiclass (2+ classes): prefixed with that class's slug,
+                  e.g. `class.wizard.spells.cantrips`,
+                  `class.cleric.spells.prepared`. Each spellcasting class
+                  resolves its own cantrips/known/prepared spells
+                  independently, as if single-classed — only the spell
+                  SLOT pool is shared (see `sheet.spellcasting` below).
+              kind:
+                type: string
+                enum:
+                  - cantripsKnown
+                  - spellsKnown
+                  - spellsPrepared
+                  - pactSpellsKnown
+                  - spellbook
+              count:
+                type:
+                  - integer
+                  - "null"
+              deferred:
+                type:
+                  - boolean
+                  - "null"
+              required:
+                type:
+                  - boolean
+                  - "null"
+              spellLevelMin:
+                type: integer
+              spellLevelMax:
+                type: integer
+              classSlug:
+                type: string
+                description: Which class this choice belongs to (always present; matters when 2+ classes share one manifest).
+              classLevel:
+                type: integer
+                description: |
+                  That class's own level (not the combined character level)
+                  — used to resolve level-dependent formulas such as the
+                  `spellsPrepared` count (`classLevel + ability modifier`).
+              path:
+                type: string
+                description: Suggested `/entities` query to list valid spell options for this choice.
+        summary:
+          type: object
+          additionalProperties: true
+
+    BuildDraftResponse:
+      type: object
+      required:
+        - draft
+        - choiceManifest
+        - spellChoiceManifest
+      properties:
+        draft:
+          type: object
+          additionalProperties: true
+          description: |
+            Resolved race/class/subclass/background identity plus a summary
+            of choice counts. `isMulticlass`/`classes` are always present
+            (single-class builds get a one-element `classes` array too);
+            `classes[].level` is that class's own level, `level` at the top
+            is the combined total. `classes[].multiclassRequirements`
+            mirrors 5etools `multiclassing.requirements` for that class.
+        choiceManifest:
+          $ref: "#/components/schemas/ChoiceManifest"
+        spellChoiceManifest:
+          $ref: "#/components/schemas/SpellChoiceManifest"
+        abilityScoreManifest:
+          type: object
+          additionalProperties: true
+          description: Supported ability score methods (`standardArray`, `manual`) and racial bonuses. No point-buy method yet.
+        raceBuilder:
+          type: object
+          additionalProperties: true
+        classBuilder:
+          type: object
+          additionalProperties: true
+        backgroundBuilder:
+          type: object
+          additionalProperties: true
+
+    BuildChoiceError:
+      type: object
+      required:
+        - choiceId
+        - code
+        - message
+      properties:
+        choiceId:
+          type: string
+        code:
+          type: string
+          examples:
+            - CHOICE_REQUIRED
+            - INVALID_CHOICE_COUNT
+            - INVALID_CHOICE_VALUE
+            - UNKNOWN_CHOICE_ID
+            - INVALID_EQUIPMENT_OPTION
+            - SPELL_CHOICE_REQUIRED
+            - INVALID_SPELL_CHOICE_COUNT
+            - INVALID_SPELL_SELECTION
+            - MANUAL_ABILITY_SCORE_OUT_OF_RANGE
+        message:
+          type: string
+      additionalProperties: true
+
+    BuildChoiceWarning:
+      type: object
+      required:
+        - choiceId
+        - code
+        - message
+      properties:
+        choiceId:
+          type: string
+        code:
+          type: string
+          examples:
+            - SYNTHETIC_ITEM_SELECTED
+            - EQUIPMENT_SELECTOR_REQUIRES_RESOLUTION
+        message:
+          type: string
+      additionalProperties: true
+
+    BuildAbilityScores:
+      type: object
+      required:
+        - method
+      properties:
+        method:
+          type: string
+          enum: [standardArray, manual, pointBuy]
+          description: |
+            `pointBuy` uses a 27-point budget over a 8-15 range per ability
+            (PHB cost table); scores below 8 or above 15, or a total cost
+            over budget, are rejected.
+        assignments:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 3
+            maximum: 18
+          description: Ability slug (str/dex/con/int/wis/cha) to score, required for the `manual` method.
+
+    BuildChoicesInput:
+      type: object
+      additionalProperties:
+        oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+      description: |
+        Map of choice ID (from `choiceManifest.choices[].id`) to the
+        selected value(s). Single-value choices use a plain string
+        (equipment option key, e.g. `"a"`, or the fixed-option placeholder
+        `"_"`); multi-value choices (skills, languages, ability score
+        picks) use an array of strings.
+
+    BuildValidateRequest:
+      type: object
+      description: |
+        One of `class` (single-class) or `classes` (multiclass, 2+ classes)
+        is required; they are mutually exclusive. `level` only applies to
+        the single-class form — multiclass builds set each class's level
+        inside `classes[]` instead.
+      required:
+        - race
+        - raceSource
+        - background
+        - backgroundSource
+      properties:
+        race:
+          type: string
+        raceSource:
+          type: string
+        class:
+          type: string
+          description: Single-class slug. Omit when using `classes`.
+        classSource:
+          type: string
+        subclass:
+          type: string
+          description: Single-class subclass slug. Omit when using `classes` (set per-entry `subclass` instead).
+        classes:
+          type: array
+          description: |
+            Multiclass form: one entry per class, first entry is the
+            starting class (the only one with starting equipment). Choice
+            IDs that are normally `class.<category>...` become
+            `class.<slug>.<category>...` once 2+ classes are present (e.g.
+            `class.fighter.subclass`, `class.wizard.spells.cantrips`).
+            Ability score prerequisites from 5etools
+            `multiclassing.requirements` are enforced for every class in
+            the array, including the starting one
+            (`MULTICLASS_PREREQUISITE_NOT_MET`).
+          items:
+            type: object
+            required:
+              - slug
+              - level
+            properties:
+              slug:
+                type: string
+              source:
+                type: string
+              level:
+                type: integer
+                minimum: 1
+                maximum: 20
+              subclass:
+                type: string
+          examples:
+            fighterWizard:
+              value:
+                - slug: fighter
+                  source: PHB
+                  level: 3
+                  subclass: champion
+                - slug: wizard
+                  source: PHB
+                  level: 2
+        background:
+          type: string
+        backgroundSource:
+          type: string
+        level:
+          type: integer
+          minimum: 1
+          maximum: 20
+          description: Character level for the single-class form. Ignored when `classes` is present (each entry has its own `level`; the total is their sum).
+        locale:
+          type: string
+          enum: [it, en]
+          default: en
+        partial:
+          type: boolean
+          description: When true, do not require every choice to be resolved (used for incremental UI validation while building).
+        choices:
+          $ref: "#/components/schemas/BuildChoicesInput"
+        spellChoices:
+          $ref: "#/components/schemas/BuildChoicesInput"
+        selectorChoices:
+          $ref: "#/components/schemas/BuildChoicesInput"
+        abilityScores:
+          $ref: "#/components/schemas/BuildAbilityScores"
+
+    BuildSheetRequest:
+      allOf:
+        - $ref: "#/components/schemas/BuildValidateRequest"
+
+    BuildValidateResponse:
+      type: object
+      required:
+        - valid
+      properties:
+        valid:
+          type: boolean
+        partial:
+          type: boolean
+        error:
+          type: string
+          description: Present only on the HTTP 422 hard-failure shape (e.g. `BUILD_SPELL_CHOICES_INVALID`).
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildChoiceError"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildChoiceWarning"
+        summary:
+          type: object
+          additionalProperties: true
+        resolved:
+          type: object
+          additionalProperties: true
+        choiceManifestSummary:
+          type: object
+          additionalProperties: true
+        spellChoiceManifestSummary:
+          type: object
+          additionalProperties: true
+        abilityScoreManifestSummary:
+          type: object
+          additionalProperties: true
+
+    BuildSheetResponse:
+      type: object
+      required:
+        - valid
+      properties:
+        valid:
+          type: boolean
+        error:
+          type: string
+          description: Present only on HTTP 422 (`BUILD_CHOICES_INVALID` or `BUILD_SPELL_CHOICES_INVALID`).
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildChoiceError"
+        sheet:
+          type: object
+          additionalProperties: true
+          description: |
+            Present only when `valid: true`. Known top-level keys today:
+            `identity, abilityBonuses, abilities, size, speed, senses,
+            defenses, proficiencies, equipment, features, spellcasting,
+            spells, resourceUsage, derivedStats, combatStats,
+            weaponAttacks, spellActions, actions, resources, summary,
+            warnings`. Spell-action coverage (`spellActions`) and
+            weapon-action coverage (`weaponAttacks`) are partial — see
+            `docs/pg-builder-roadmap.md`. `resources.resourcePools` exposes
+            per-class limited-use resources (rage, ki, sorcery points,
+            superiority dice, Channel Divinity, hit dice) with `max`/`used`/
+            `remaining` per pool, consumed via `resourceUsage.resourcePools`
+            in the request; `unlimited: true` (e.g. level-20 barbarian rage)
+            means `max`/`remaining` are `null` rather than `Infinity`, since
+            that has no JSON representation. `resources.conditions.effects`
+            covers 14 PHB conditions (boolean flags such as
+            `hasAttackRollDisadvantage`, `speedZero`, `resistantToAllDamage`).
+            Exhaustion is modeled separately as `resources.exhaustion`
+            (`resourceUsage.exhaustionLevel`, 0-6) because its effects are
+            cumulative by level rather than a flat boolean, unlike the other
+            conditions; level 6 sets `resources.exhaustion.isDead`.
+
+            Multiclassing (single-class builds are unaffected): pass `class`/
+            `classSource`/`level`/`subclass` as today for one class, or a
+            `classes: [{slug, source, level, subclass}, ...]` array (first
+            entry is the starting class, the only one with starting
+            equipment) for 2+. Choice ids switch from `class.subclass` to
+            `class.<slug>.subclass` only when 2+ classes are present.
+            `identity.classes`/`draft.classes` expose each class's own level
+            (ASI/spell progression use that, not the total); `identity.level`
+            stays the combined total. Ability score prerequisites (from
+            5etools `multiclassing.requirements`) are enforced for every
+            class once 2+ are present — see `MULTICLASS_PREREQUISITE_NOT_MET`.
+
+            Multiclass spellcasting: `spellcasting.spellSlots` is the
+            **shared** pool across every non-Pact-Magic caster, looked up at
+            the combined multiclass caster level (full casters count their
+            whole level, half casters `floor(level/2)`, the artificer
+            `ceil(level/2)`, Pact Magic/warlock never joins the pool).
+            `spellcasting.isMulticlassPool: true` and
+            `spellcasting.multiclassCasterLevel` flag this case;
+            `spellcasting.pactMagic` keeps the warlock's own pact slots
+            exposed separately, with `hasPactMagic` reflecting that. Known/
+            prepared spells are still resolved per class as if
+            single-classed (see `SpellChoiceManifest` above) —
+            `spellcasting.ability`/`preparationMode` reflect one
+            representative caster class, not a per-spell-origin breakdown
+            (this part is an intentional simplification). `spellSaveDc`/
+            `spellAttackBonus`, however, **are** resolved per class: with
+            2+ casters, `derivedStats.spellcasting.byClass` is an array of
+            `{classSlug, ability, spellSaveDc, spellAttackBonus, ...}`, one
+            entry per spellcasting class, each using that class's own
+            ability score (proficiency bonus is shared, since it only
+            depends on the combined character level). The top-level
+            `derivedStats.spellcasting.spellSaveDc`/`spellAttackBonus`
+            still mirror one representative class for backward
+            compatibility with single-class consumers.
+
+            Multiclass resources: `resources.resourcePools` resolves every
+            pool (rage, ki, sorcery points, Channel Divinity, hit dice) at
+            **that class's own level**, not the combined total — each class
+            in the build gets its own hit dice pool (different die per
+            class, e.g. a Fighter/Wizard has both a `d10` and a `d6` pool).
+            With a single class, pool keys are unprefixed (`rage`,
+            `hitDice`, ...) exactly as before; with 2+ classes, every key is
+            suffixed with that class's slug (`rage.barbarian`,
+            `hitDice.barbarian`, `hitDice.monk`, `ki.monk`) to avoid
+            collisions when two classes grant same-named pools.
+        resolved:
+          type: object
+          additionalProperties: true
+        choiceManifestSummary:
+          type: object
+          additionalProperties: true
+
+    SourcesResponse:
+      type: object
+      required:
+        - sources
+      properties:
+        sources:
+          type: array
+          items:
+            type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+  responses:
+    InvalidEntityType:
+      description: Invalid entity type.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            invalid:
+              value:
+                error: INVALID_ENTITY_TYPE
+                message: "Invalid entity type: invalid"
+
+    EntityNotFound:
+      description: Entity not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            notFound:
+              value:
+                error: ENTITY_NOT_FOUND
+                message: "Entity not found"
+
+    EntityDetailError:
+      description: Unable to load entity detail.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            error:
+              value:
+                error: ENTITY_DETAIL_ERROR
+                message: Unable to load entity
+
+    SearchError:
+      description: Unable to search entities.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            error:
+              value:
+                error: SEARCH_ERROR
+                message: Unable to search entities
+
+    EntitiesError:
+      description: Unable to load entities.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            error:
+              value:
+                error: ENTITIES_ERROR
+                message: Unable to load entities
+
+    StatsError:
+      description: Unable to load stats.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            error:
+              value:
+                error: STATS_ERROR
+                message: Unable to load stats
+
+x-nuovo5e-notes:
+  idStrategy:
+    standard: entityType:source:slug
+    classFeature: classFeature:source:className:featureSlug
+    subclassFeature: subclassFeature:source:className:subclassName:featureSlug
+  frontendRecommendation: Use /entity/:encodedId for all search and list navigation.
+  knownLimitations:
+    - Search currently matches names/slugs, not full content.
+    - /entities/{entityType}/{slug} can be ambiguous.
+    - Some normalized schemas are intentionally incomplete and advanced renderers may need raw5e.
+    - Dataset is based on D&D 5e 2014; 2024 content may differ.
