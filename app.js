@@ -3107,7 +3107,8 @@ const BCHOICE_KIND_LABELS = {
 const BSCOPE_LABELS  = { race:'Razza', class:'Classe', background:'Background' };
 const BSPELL_LABELS  = {
   cantripsKnown:'Trucchi', spellsKnown:'Incantesimi Noti', spellbook:'Libro degli Incantesimi',
-  preparedSpells:'Incantesimi Preparati', pactMagic:'Incantesimi del Patto',
+  preparedSpells:'Incantesimi Preparati', spellsPrepared:'Incantesimi Preparati',
+  pactMagic:'Incantesimi del Patto',
 };
 
 let BL   = null; // entity lists cache { races, classes, bgs }
@@ -3499,20 +3500,24 @@ async function bRenderSpells() {
 
   // Show skeletons first
   el.innerHTML = all.map(c => {
-    const { id, kind, count = 1, spellLevelMin = 0, spellLevelMax = 9 } = c;
+    const { id, kind, count, spellLevelMin = 0, spellLevelMax = 9 } = c;
     const title  = BSPELL_LABELS[kind] || kind;
     const lvlStr = spellLevelMin === 0 ? 'trucchi'
       : spellLevelMin === spellLevelMax ? `liv. ${spellLevelMin}`
       : `liv. ${spellLevelMin}–${spellLevelMax}`;
+    // count is null for prepared spellcasters (depends on ability scores at runtime)
+    const countStr = count != null ? `scegli ${count}` : (c.countFormulaLabel || 'numero variabile');
     return `<div class="b-choice-group" id="scg-${esc(id)}">
-      <div class="b-choice-title">${esc(title)} <span class="b-choice-count">(scegli ${count}, ${lvlStr})</span></div>
+      <div class="b-choice-title">${esc(title)} <span class="b-choice-count">(${esc(countStr)}, ${lvlStr})</span></div>
       <div class="b-sa-hint">Caricamento incantesimi…</div>
     </div>`;
   }).join('');
 
   // Fetch spells for each choice concurrently
   await Promise.all(all.map(async c => {
-    const { id, count = 1, path } = c;
+    const { id, path } = c;
+    // null count = prepared spellcasters: limit depends on ability scores, allow free selection
+    const effectiveCount = c.count != null ? c.count : 99;
     const cg = document.getElementById(`scg-${id}`);
     if (!cg) return;
 
@@ -3534,7 +3539,7 @@ async function bRenderSpells() {
               const val = s.id || '';
               const lbl = s.name || s.originalName || val;
               return `<label class="b-checkbox-label">
-                <input type="checkbox" data-scid="${esc(id)}" data-count="${count}" value="${esc(val)}"${selected.includes(val)?' checked':''}>
+                <input type="checkbox" data-scid="${esc(id)}" data-count="${effectiveCount}" value="${esc(val)}"${selected.includes(val)?' checked':''}>
                 <span>${esc(lbl)}</span></label>`;
             }).join('')
           : '<span class="b-sa-hint">Nessun incantesimo disponibile.</span>'}
@@ -3544,7 +3549,8 @@ async function bRenderSpells() {
 }
 
 function bAttachSpellEvents(choice) {
-  const { id, count = 1 } = choice;
+  const { id } = choice;
+  const count = choice.count != null ? choice.count : 99; // null = prepared caster, no hard cap
   // spell containers use scg- prefix
   const cg = document.getElementById(`scg-${id}`);
   if (!cg) return;
