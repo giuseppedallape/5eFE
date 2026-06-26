@@ -3433,6 +3433,17 @@ function bRenderChoices(bd, containerId) {
   const all = bd?.choiceManifest?.choices || [];
   if (!all.length) { el.innerHTML = ''; return; }
 
+  // Pre-populate ASI default so backend always receives a valid value
+  // even if the user never interacts with the widget
+  let needsSave = false;
+  for (const c of all) {
+    if (c.kind === 'abilityScoreImprovement' && !BS.choices[c.id]) {
+      BS.choices[c.id] = { mode: 'increase', abilities: ['str'] };
+      needsSave = true;
+    }
+  }
+  if (needsSave) bsSave();
+
   el.innerHTML = all.map(c => bChoiceWidget(c)).join('');
   all.forEach(c => bAttachChoiceEvents(c));
 }
@@ -3862,7 +3873,7 @@ function bBuildBody() {
     classSource:      BS.classSource,
     background:       BS.background,
     backgroundSource: BS.backgroundSource,
-    level:            BS.level,
+    level:            BS.currentLevel,
     locale:           BS.locale,
     choices:          BS.choices,
     spellChoices,
