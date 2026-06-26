@@ -3112,7 +3112,9 @@ const BSPELL_LABELS  = {
 };
 
 let BL   = null; // entity lists cache { races, classes, bgs }
-let BD   = null; // draft response
+let BD   = null; // current level draft (alias for BDs[BS.currentLevel])
+let BDs  = {};   // per-level draft cache { 1: bd1, 2: bd2, ... }
+let BHitDiceFaces = null; // class hit die faces (fetched once on class select)
 let BS   = bsDefault();
 
 function bsDefault() {
@@ -3184,11 +3186,9 @@ function bRenderForm() {
   document.getElementById('b-form-view').classList.remove('hidden');
   document.getElementById('b-sheet-view').classList.add('hidden');
 
-  // Locale buttons
   document.querySelectorAll('[data-b-locale]').forEach(btn =>
     btn.classList.toggle('active', btn.dataset.bLocale === BS.locale)
   );
-  // Selects
   if (BL) {
     bFillSelect('b-race',       BL.races,   BS.race,       BS.raceSource);
     bFillSelect('b-class',      BL.classes, BS.class,      BS.classSource);
@@ -3200,19 +3200,10 @@ function bRenderForm() {
   const hasDraft = !!BD;
   const atTarget = hasDraft && (BS.currentLevel >= BS.level);
   document.getElementById('b-sec-scores').classList.toggle('hidden', !hasDraft);
-  document.getElementById('b-sec-choices').classList.toggle('hidden', !hasDraft);
+  document.getElementById('b-levels-ui').classList.toggle('hidden', !hasDraft);
   document.getElementById('b-generate-row').classList.toggle('hidden', !hasDraft);
 
-  const hasSpells = hasDraft && (BD.spellChoiceManifest?.choices?.length > 0);
-  document.getElementById('b-sec-spells').classList.toggle('hidden', !hasSpells);
-
   if (hasDraft) {
-    const levelLabel = BS.level > 1 ? ` — Livello ${BS.currentLevel}` : '';
-    const choicesLblEl = document.getElementById('b-choices-level-label');
-    if (choicesLblEl) choicesLblEl.textContent = levelLabel;
-    const spellsLblEl = document.getElementById('b-spells-level-label');
-    if (spellsLblEl) spellsLblEl.textContent = levelLabel;
-
     const advBtn = document.getElementById('b-advance-btn');
     const genBtn = document.getElementById('b-generate-btn');
     const hintEl = document.getElementById('b-level-hint');
@@ -3231,8 +3222,7 @@ function bRenderForm() {
     }
 
     bRenderScores();
-    bRenderChoices();
-    if (hasSpells) bRenderSpells(); // async, no await — renders progressively
+    bRenderAllLevels(); // renders all loaded levels with summaries
   }
 }
 
@@ -3338,13 +3328,112 @@ function bRenderScoreInputs() {
   }
 }
 
+// ── Level-by-level render ────────────────────────────────
+
+function bProfBonus(level) { return Math.floor((level - 1) / 4) + 2; }
+
+function bSlotDeltaHTML(bd, lvl) {
+  const sc = bd?.classBuilder?.spellcasting;
+  if (!sc?.canCastSpells) return '';
+  const curSlots  = sc.spellSlots?.slots || {};
+  const prevBd    = BDs[lvl - 1];
+  const prevSlots = prevBd?.classBuilder?.spellcasting?.spellSlots?.slots || {};
+
+  const parts = [];
+  for (let i = 1; i <= 9; i++) {
+    const cur  = curSlots[String(i)]  || 0;
+    const prev = prevSlots[String(i)] || 0;
+    if (cur > prev) parts.push(`+${cur - prev} slot lv.${i} (tot. ${cur})`);
+    else if (cur > 0 && lvl === 1) parts.push(`${cur} slot lv.${i}`);
+  }
+  if (!parts.length) return '';
+  return `<span class="b-sum-badge b-sum-badge--spell">✨ ${parts.join(' · ')}</span>`;
+}
+
+function bLevelSummaryHTML(bd, lvl) {
+  const features = bd?.classBuilder?.features?.classFeaturesAtLevel || [];
+  const badges   = [];
+
+  // HP
+  const hd = BHitDiceFaces;
+  if (hd) badges.push(`<span class="b-sum-badge b-sum-badge--hp">❤️ +1d${hd} PF</span>`);
+
+  // Proficiency bonus (only show when it changes)
+  const pb = bProfBonus(lvl);
+  if (lvl === 1 || bProfBonus(lvl - 1) !== pb) {
+    badges.push(`<span class="b-sum-badge b-sum-badge--prof">🛡 Bonus comp. +${pb}</span>`);
+  }
+
+  // Spell slots
+  const slotHTML = bSlotDeltaHTML(bd, lvl);
+  if (slotHTML) badges.push(slotHTML);
+
+  // Class features at this level
+  for (const f of features) {
+    badges.push(`<span class="b-sum-badge">${esc(f.name)}</span>`);
+  }
+
+  if (!badges.length) return '';
+  return `<div class="b-level-summary">${badges.join('')}</div>`;
+}
+
+function bRenderAllLevels() {
+  const container = document.getElementById('b-levels-ui');
+  if (!container) return;
+
+  // Build HTML for all loaded levels
+  let html = '';
+  for (let lvl = 1; lvl <= BS.currentLevel; lvl++) {
+    const bd = BDs[lvl];
+    if (!bd) continue;
+    const isCurrent = lvl === BS.currentLevel;
+    const hasChoices = (bd.choiceManifest?.choices?.length || 0) > 0;
+    const hasSpells  = (bd.spellChoiceManifest?.choices?.length || 0) > 0;
+    const isEmpty    = !hasChoices && !hasSpells;
+
+    html += `<div class="b-level-section${isCurrent ? ' b-level-current' : ''}" data-level="${lvl}">
+      <button class="b-level-header" type="button" data-toggle-level="${lvl}">
+        <span class="b-level-header-title">Livello ${lvl}</span>
+        <span class="b-level-header-arrow">${isCurrent ? '▲' : '▼'}</span>
+      </button>
+      ${bLevelSummaryHTML(bd, lvl)}
+      <div class="b-level-content${isCurrent ? '' : ' hidden'}" id="blc-${lvl}">
+        <div id="b-choices-ui-${lvl}"></div>
+        ${hasSpells ? `<div id="b-spells-ui-${lvl}"></div>` : ''}
+        ${isEmpty   ? `<div class="b-sa-hint">Nessuna scelta richiesta a questo livello.</div>` : ''}
+      </div>
+    </div>`;
+  }
+  container.innerHTML = html;
+
+  // Attach toggle events
+  container.querySelectorAll('[data-toggle-level]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lvl  = +btn.dataset.toggleLevel;
+      const cont = document.getElementById(`blc-${lvl}`);
+      const arr  = btn.querySelector('.b-level-header-arrow');
+      if (cont) { cont.classList.toggle('hidden'); arr.textContent = cont.classList.contains('hidden') ? '▼' : '▲'; }
+    });
+  });
+
+  // Render choices and spells for each level
+  for (let lvl = 1; lvl <= BS.currentLevel; lvl++) {
+    const bd = BDs[lvl];
+    if (!bd) continue;
+    bRenderChoices(bd, `b-choices-ui-${lvl}`);
+    if ((bd.spellChoiceManifest?.choices?.length || 0) > 0) {
+      bRenderSpells(bd, `b-spells-ui-${lvl}`); // async, no await
+    }
+  }
+}
+
 // ── Non-spell choices ───────────────────────────────────
 
-function bRenderChoices() {
-  const el  = document.getElementById('b-choices-ui');
+function bRenderChoices(bd, containerId) {
+  const el  = document.getElementById(containerId || 'b-choices-ui');
   if (!el) return;
-  const all = BD?.choiceManifest?.choices || [];
-  if (!all.length) { el.innerHTML = '<div class="b-sa-hint">Nessuna scelta richiesta.</div>'; return; }
+  const all = bd?.choiceManifest?.choices || [];
+  if (!all.length) { el.innerHTML = ''; return; }
 
   el.innerHTML = all.map(c => bChoiceWidget(c)).join('');
   all.forEach(c => bAttachChoiceEvents(c));
@@ -3566,10 +3655,10 @@ function bExpandSpellChoices(grouped, merged) {
   return out;
 }
 
-async function bRenderSpells() {
-  const el  = document.getElementById('b-spells-ui');
+async function bRenderSpells(bd, containerId) {
+  const el  = document.getElementById(containerId || 'b-spells-ui');
   if (!el) return;
-  const raw = BD?.spellChoiceManifest?.choices || [];
+  const raw = bd?.spellChoiceManifest?.choices || [];
   const all = bGroupSpellChoices(raw);
 
   // Show skeletons first
@@ -3674,16 +3763,24 @@ async function bLoadChoices() {
   btn.textContent = 'Caricamento…';
 
   try {
-    BD = await apiFetch('/builds/draft', {
-      race:             BS.race,
-      raceSource:       BS.raceSource,
-      class:            BS.class,
-      classSource:      BS.classSource,
-      background:       BS.background,
-      backgroundSource: BS.backgroundSource,
-      level:            1,
-      locale:           BS.locale,
-    });
+    const [draft, classEntity] = await Promise.all([
+      apiFetch('/builds/draft', {
+        race:             BS.race,
+        raceSource:       BS.raceSource,
+        class:            BS.class,
+        classSource:      BS.classSource,
+        background:       BS.background,
+        backgroundSource: BS.backgroundSource,
+        level:            1,
+        locale:           BS.locale,
+      }),
+      apiFetch(`/entities/by-slug/class/${encodeURIComponent(BS.class)}`, {
+        source: BS.classSource, locale: BS.locale,
+      }).catch(() => null),
+    ]);
+    BD   = draft;
+    BDs  = { 1: draft };
+    BHitDiceFaces = classEntity?.normalized?.hitDiceFaces ?? null;
     // Reset all choices and start at level 1
     BS.choices      = {};
     BS.spellChoices = {};
@@ -3713,7 +3810,7 @@ async function bAdvanceLevel() {
   errEl.classList.add('hidden');
 
   try {
-    BD = await apiFetch('/builds/draft', {
+    const draft = await apiFetch('/builds/draft', {
       race:             BS.race,
       raceSource:       BS.raceSource,
       class:            BS.class,
@@ -3724,6 +3821,8 @@ async function bAdvanceLevel() {
       fromLevel:        BS.currentLevel,
       locale:           BS.locale,
     });
+    BD = draft;
+    BDs[nextLevel] = draft;
     BS.currentLevel = nextLevel;
     bsSave();
     bRenderForm();
@@ -3754,7 +3853,8 @@ async function apiPost(path, body) {
 }
 
 function bBuildBody() {
-  const raw     = BD?.spellChoiceManifest?.choices || [];
+  // Collect spell choice manifests from all loaded levels
+  const raw     = Object.values(BDs).flatMap(bd => bd?.spellChoiceManifest?.choices || []);
   const grouped = bGroupSpellChoices(raw);
   const spellChoices = bExpandSpellChoices(grouped, BS.spellChoices);
   return {
@@ -4140,6 +4240,8 @@ function initBuilder() {
   D_builder.resetBtn?.addEventListener('click', () => {
     if (!confirm('Azzerare tutta la Forgia del PG?')) return;
     BD  = null;
+    BDs = {};
+    BHitDiceFaces = null;
     BS  = bsDefault();
     bsSave();
     bRenderForm();
@@ -4154,36 +4256,34 @@ function initBuilder() {
   });
 
   // Identity selects
+  const bResetDraft = () => { BD = null; BDs = {}; BHitDiceFaces = null; BS.currentLevel = 1; };
   D_builder.raceEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.race = slug || ''; BS.raceSource = src || '';
-    BD = null; BS.currentLevel = 1; bsSave();
+    bResetDraft(); bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
-    document.getElementById('b-sec-choices').classList.add('hidden');
-    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-levels-ui').classList.add('hidden');
     document.getElementById('b-generate-row').classList.add('hidden');
   });
   D_builder.classEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.class = slug || ''; BS.classSource = src || '';
-    BD = null; BS.currentLevel = 1; bsSave();
+    bResetDraft(); bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
-    document.getElementById('b-sec-choices').classList.add('hidden');
-    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-levels-ui').classList.add('hidden');
     document.getElementById('b-generate-row').classList.add('hidden');
   });
   D_builder.bgEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.background = slug || ''; BS.backgroundSource = src || '';
-    BD = null; BS.currentLevel = 1; bsSave();
+    bResetDraft(); bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
-    document.getElementById('b-sec-choices').classList.add('hidden');
-    document.getElementById('b-sec-spells').classList.add('hidden');
+    document.getElementById('b-levels-ui').classList.add('hidden');
     document.getElementById('b-generate-row').classList.add('hidden');
   });
   D_builder.levelEl?.addEventListener('change', e => {
     BS.level = Math.max(1, Math.min(20, +e.target.value || 1));
-    BD = null; BS.currentLevel = 1; bsSave();
+    bResetDraft(); bsSave();
   });
   D_builder.nameEl?.addEventListener('input', e => { BS.name = e.target.value; bsSave(); });
 
@@ -4194,7 +4294,7 @@ function initBuilder() {
       document.querySelectorAll('[data-b-locale]').forEach(b =>
         b.classList.toggle('active', b.dataset.bLocale === BS.locale)
       );
-      BD = null; BL = null; // reload lists & draft for new locale
+      BD = null; BDs = {}; BHitDiceFaces = null; BL = null; // reload lists & draft for new locale
       bsSave();
       bLoadLists();
     });

@@ -2256,6 +2256,63 @@ body {
 }
 .b-level-hint.hidden { display: none; }
 
+/* Level-by-level sections */
+#b-levels-ui.hidden { display: none; }
+.b-level-section {
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.b-level-current {
+  border-color: var(--c-gold);
+}
+.b-level-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--c-panel);
+  border: none;
+  cursor: pointer;
+  color: var(--c-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.b-level-current .b-level-header {
+  background: color-mix(in srgb, var(--c-gold) 12%, var(--c-panel));
+  color: var(--c-gold);
+}
+.b-level-header:hover { background: var(--c-hover); }
+.b-level-header-arrow { font-size: 10px; color: var(--c-text2); }
+.b-level-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--c-bg);
+  border-bottom: 1px solid var(--c-border);
+}
+.b-sum-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  background: var(--c-panel);
+  color: var(--c-text2);
+  border: 1px solid var(--c-border);
+}
+.b-sum-badge--hp   { border-color: #c0392b44; color: #e74c3c; }
+.b-sum-badge--prof { border-color: #2980b944; color: #3498db; }
+.b-sum-badge--spell { border-color: #8e44ad44; color: #9b59b6; }
+.b-level-content {
+  padding: 10px 12px 4px;
+}
+.b-level-content.hidden { display: none; }
+
 /* Sheet bar */
 .b-sheet-bar {
   display: flex;
