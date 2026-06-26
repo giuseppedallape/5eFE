@@ -3198,7 +3198,7 @@ function bRenderForm() {
   document.getElementById('b-level').value = BS.level || 1;
 
   const hasDraft = !!BD;
-  const atTarget = hasDraft && (BS.currentLevel >= BS.level);
+  const canAdvance = hasDraft && BS.currentLevel < 20;
   document.getElementById('b-sec-scores').classList.toggle('hidden', !hasDraft);
   document.getElementById('b-levels-ui').classList.toggle('hidden', !hasDraft);
   document.getElementById('b-generate-row').classList.toggle('hidden', !hasDraft);
@@ -3208,17 +3208,14 @@ function bRenderForm() {
     const genBtn = document.getElementById('b-generate-btn');
     const hintEl = document.getElementById('b-level-hint');
     if (advBtn) {
-      advBtn.classList.toggle('hidden', atTarget);
-      if (!atTarget) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
+      advBtn.classList.toggle('hidden', !canAdvance);
+      if (canAdvance) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
     }
-    if (genBtn) genBtn.classList.toggle('hidden', !atTarget);
+    if (genBtn) genBtn.classList.remove('hidden'); // always available once draft loaded
     if (hintEl) {
-      hintEl.classList.toggle('hidden', BS.level <= 1);
-      if (BS.level > 1) {
-        hintEl.textContent = atTarget
-          ? `Livello ${BS.level} di ${BS.level} — completa le scelte e genera la scheda.`
-          : `Livello ${BS.currentLevel} di ${BS.level} — completa le scelte poi avanza.`;
-      }
+      const isMultiLevel = BS.level > 1 || BS.currentLevel > 1;
+      hintEl.classList.toggle('hidden', !isMultiLevel);
+      if (isMultiLevel) hintEl.textContent = `Livello ${BS.currentLevel}`;
     }
 
     bRenderScores();
@@ -3800,7 +3797,7 @@ async function bLoadChoices() {
 
 async function bAdvanceLevel() {
   const nextLevel = BS.currentLevel + 1;
-  if (nextLevel > BS.level) return;
+  if (nextLevel > 20) return;
 
   const btn = document.getElementById('b-advance-btn');
   btn.disabled = true;
