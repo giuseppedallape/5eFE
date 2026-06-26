@@ -3195,7 +3195,6 @@ function bRenderForm() {
     bFillSelect('b-background', BL.bgs,     BS.background, BS.backgroundSource);
   }
   document.getElementById('b-name').value  = BS.name || '';
-  document.getElementById('b-level').value = BS.level || 1;
 
   const hasDraft = !!BD;
   const canAdvance = hasDraft && BS.currentLevel < 20;
@@ -3213,11 +3212,7 @@ function bRenderForm() {
       if (canAdvance) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
     }
     if (genBtn) genBtn.classList.remove('hidden'); // always available once draft loaded
-    if (hintEl) {
-      const isMultiLevel = BS.level > 1 || BS.currentLevel > 1;
-      hintEl.classList.toggle('hidden', !isMultiLevel);
-      if (isMultiLevel) hintEl.textContent = `Livello ${BS.currentLevel}`;
-    }
+    if (hintEl) hintEl.classList.add('hidden'); // no longer needed
 
     bRenderScores();
     bRenderAllLevels(); // renders all loaded levels with summaries
@@ -3805,18 +3800,56 @@ async function bLoadChoices() {
   }
 }
 
+// ── Current-level completeness check ────────────────────
+
+function bCurrentLevelMissing() {
+  const bd = BDs[BS.currentLevel];
+  if (!bd) return [];
+  const missing = [];
+
+  const choices = bd.choiceManifest?.choices || [];
+  for (const c of choices) {
+    const val = BS.choices[c.id];
+    if (c.kind === 'abilityScoreImprovement') {
+      if (!val) missing.push(c.id);
+    } else if (c.kind === 'proficiency') {
+      const arr = Array.isArray(val) ? val : [];
+      if (arr.length < (c.count ?? 1)) missing.push(c.id);
+    } else {
+      if (!val) missing.push(c.id);
+    }
+  }
+
+  const raw     = bd.spellChoiceManifest?.choices || [];
+  const grouped = bGroupSpellChoices(raw);
+  for (const c of grouped) {
+    if (c.count == null) continue; // prepared casters: no hard cap
+    const arr = Array.isArray(BS.spellChoices[c.id]) ? BS.spellChoices[c.id] : [];
+    if (arr.length < c.count) missing.push(c.id);
+  }
+
+  return missing;
+}
+
 // ── Advance to next level ───────────────────────────────
 
 async function bAdvanceLevel() {
   const nextLevel = BS.currentLevel + 1;
   if (nextLevel > 20) return;
 
+  const errEl = document.getElementById('b-errors');
+  errEl.classList.add('hidden');
+
+  const missing = bCurrentLevelMissing();
+  if (missing.length) {
+    errEl.innerHTML = `Completa tutte le scelte del livello ${BS.currentLevel} prima di avanzare.`;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   const btn = document.getElementById('b-advance-btn');
   btn.disabled = true;
   btn.textContent = 'Caricamento…';
-
-  const errEl = document.getElementById('b-errors');
-  errEl.classList.add('hidden');
 
   try {
     const draft = await apiFetch('/builds/draft', {
@@ -4239,7 +4272,6 @@ function initBuilder() {
     raceEl:     document.getElementById('b-race'),
     classEl:    document.getElementById('b-class'),
     bgEl:       document.getElementById('b-background'),
-    levelEl:    document.getElementById('b-level'),
     nameEl:     document.getElementById('b-name'),
   };
 
@@ -4289,10 +4321,6 @@ function initBuilder() {
     document.getElementById('b-sec-scores').classList.add('hidden');
     document.getElementById('b-levels-ui').classList.add('hidden');
     document.getElementById('b-generate-row').classList.add('hidden');
-  });
-  D_builder.levelEl?.addEventListener('change', e => {
-    BS.level = Math.max(1, Math.min(20, +e.target.value || 1));
-    bResetDraft(); bsSave();
   });
   D_builder.nameEl?.addEventListener('input', e => { BS.name = e.target.value; bsSave(); });
 
