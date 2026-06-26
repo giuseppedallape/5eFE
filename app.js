@@ -3115,6 +3115,7 @@ let BL   = null; // entity lists cache { races, classes, bgs }
 let BD   = null; // current level draft (alias for BDs[BS.currentLevel])
 let BDs  = {};   // per-level draft cache { 1: bd1, 2: bd2, ... }
 let BHitDiceFaces = null; // class hit die faces (fetched once on class select)
+let BGenerated = false; // true after first successful generation
 let BS   = bsDefault();
 
 function bsDefault() {
@@ -3211,8 +3212,11 @@ function bRenderForm() {
       advBtn.disabled = false;
       if (canAdvance) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
     }
-    if (genBtn) genBtn.classList.remove('hidden'); // always available once draft loaded
-    if (hintEl) hintEl.classList.add('hidden'); // no longer needed
+    if (genBtn) {
+      genBtn.classList.remove('hidden');
+      genBtn.textContent = BGenerated ? '⚒ Aggiorna Scheda' : '⚒ Genera Scheda';
+    }
+    if (hintEl) hintEl.classList.add('hidden');
 
     bRenderScores();
     bRenderAllLevels(); // renders all loaded levels with summaries
@@ -3417,6 +3421,14 @@ function bRenderAllLevels() {
     if ((bd.spellChoiceManifest?.choices?.length || 0) > 0) {
       bRenderSpells(bd, `b-spells-ui-${lvl}`); // async, no await
     }
+  }
+
+  // Auto-scroll to current level section when leveling up
+  if (BS.currentLevel > 1) {
+    requestAnimationFrame(() => {
+      const cur = container.querySelector('.b-level-current');
+      if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 }
 
@@ -3848,8 +3860,9 @@ async function bAdvanceLevel() {
   }
 
   const btn = document.getElementById('b-advance-btn');
-  btn.disabled = true;
-  btn.textContent = 'Caricamento…';
+  const lvlUpBtn = document.getElementById('b-levelup-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Caricamento…'; }
+  if (lvlUpBtn) { lvlUpBtn.disabled = true; lvlUpBtn.textContent = 'Caricamento…'; }
 
   try {
     const draft = await apiFetch('/builds/draft', {
@@ -3945,7 +3958,17 @@ async function bGenerate() {
     }
 
     const result = await apiPost('/builds/sheet', bBuildBody());
-    if (result.sheet) bRenderSheet(result.sheet);
+    if (result.sheet) {
+      BGenerated = true;
+      bRenderSheet(result.sheet);
+      // Configure Level Up button on sheet
+      const lvlUpBtn = document.getElementById('b-levelup-btn');
+      if (lvlUpBtn) {
+        lvlUpBtn.disabled = false;
+        lvlUpBtn.textContent = `⬆ Level Up! (→ ${BS.currentLevel + 1})`;
+        lvlUpBtn.classList.toggle('hidden', BS.currentLevel >= 20);
+      }
+    }
 
   } catch(e) {
     // Also handle 422 from /builds/sheet
@@ -3962,7 +3985,7 @@ async function bGenerate() {
     console.error('Forgia generate error:', e);
   } finally {
     btn.disabled = false;
-    btn.textContent = '⚒ Genera Scheda';
+    btn.textContent = BGenerated ? '⚒ Aggiorna Scheda' : '⚒ Genera Scheda';
   }
 }
 
@@ -4267,6 +4290,7 @@ function initBuilder() {
     resetBtn:   document.getElementById('b-reset-btn'),
     loadBtn:    document.getElementById('b-load-btn'),
     advanceBtn: document.getElementById('b-advance-btn'),
+    levelUpBtn: document.getElementById('b-levelup-btn'),
     generateBtn:document.getElementById('b-generate-btn'),
     backBtn:    document.getElementById('b-back-btn'),
     raceEl:     document.getElementById('b-race'),
@@ -4283,6 +4307,7 @@ function initBuilder() {
     BD  = null;
     BDs = {};
     BHitDiceFaces = null;
+    BGenerated = false;
     BS  = bsDefault();
     bsSave();
     bRenderForm();
@@ -4290,6 +4315,7 @@ function initBuilder() {
 
   D_builder.loadBtn?.addEventListener('click', bLoadChoices);
   D_builder.advanceBtn?.addEventListener('click', bAdvanceLevel);
+  D_builder.levelUpBtn?.addEventListener('click', bAdvanceLevel);
   D_builder.generateBtn?.addEventListener('click', bGenerate);
   D_builder.backBtn?.addEventListener('click', () => {
     document.getElementById('b-sheet-view').classList.add('hidden');
@@ -4297,7 +4323,7 @@ function initBuilder() {
   });
 
   // Identity selects
-  const bResetDraft = () => { BD = null; BDs = {}; BHitDiceFaces = null; BS.currentLevel = 1; };
+  const bResetDraft = () => { BD = null; BDs = {}; BHitDiceFaces = null; BGenerated = false; BS.currentLevel = 1; };
   D_builder.raceEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.race = slug || ''; BS.raceSource = src || '';
