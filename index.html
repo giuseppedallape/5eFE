@@ -190,19 +190,21 @@
 
           <!-- § Scelte (hidden until draft loaded) -->
           <div class="b-section hidden" id="b-sec-choices">
-            <div class="b-section-title">Scelte</div>
+            <div class="b-section-title">Scelte<span id="b-choices-level-label"></span></div>
             <div id="b-choices-ui"></div>
           </div>
 
           <!-- § Magia (hidden until draft loaded, if caster) -->
           <div class="b-section hidden" id="b-sec-spells">
-            <div class="b-section-title">Magia</div>
+            <div class="b-section-title">Magia<span id="b-spells-level-label"></span></div>
             <div id="b-spells-ui"></div>
           </div>
 
           <!-- Genera row (hidden until draft loaded) -->
           <div id="b-generate-row" class="b-generate-row hidden">
-            <button id="b-generate-btn" class="btn-primary b-generate-btn" type="button">⚒ Genera Scheda</button>
+            <p id="b-level-hint" class="b-level-hint hidden"></p>
+            <button id="b-advance-btn" class="btn-primary b-generate-btn hidden" type="button">Avanza al livello 2 →</button>
+            <button id="b-generate-btn" class="btn-primary b-generate-btn hidden" type="button">⚒ Genera Scheda</button>
           </div>
 
         </div>

@@ -2248,6 +2248,13 @@ body {
 }
 .b-generate-row.hidden { display: none; }
 .b-generate-btn { width: 100%; padding: 10px; font-size: 14px; }
+.b-level-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--c-text2);
+  text-align: center;
+}
+.b-level-hint.hidden { display: none; }
 
 /* Sheet bar */
 .b-sheet-bar {

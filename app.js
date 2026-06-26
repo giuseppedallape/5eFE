@@ -3119,7 +3119,7 @@ function bsDefault() {
   return {
     locale:'it', name:'',
     race:'', raceSource:'', class:'', classSource:'',
-    background:'', backgroundSource:'', level:1,
+    background:'', backgroundSource:'', level:1, currentLevel:1,
     method:'standardArray',
     assignments:{ str:15, dex:14, con:13, int:12, wis:10, cha:8 },
     choices:{}, spellChoices:{},
@@ -3198,6 +3198,7 @@ function bRenderForm() {
   document.getElementById('b-level').value = BS.level || 1;
 
   const hasDraft = !!BD;
+  const atTarget = hasDraft && (BS.currentLevel >= BS.level);
   document.getElementById('b-sec-scores').classList.toggle('hidden', !hasDraft);
   document.getElementById('b-sec-choices').classList.toggle('hidden', !hasDraft);
   document.getElementById('b-generate-row').classList.toggle('hidden', !hasDraft);
@@ -3206,6 +3207,29 @@ function bRenderForm() {
   document.getElementById('b-sec-spells').classList.toggle('hidden', !hasSpells);
 
   if (hasDraft) {
+    const levelLabel = BS.level > 1 ? ` — Livello ${BS.currentLevel}` : '';
+    const choicesLblEl = document.getElementById('b-choices-level-label');
+    if (choicesLblEl) choicesLblEl.textContent = levelLabel;
+    const spellsLblEl = document.getElementById('b-spells-level-label');
+    if (spellsLblEl) spellsLblEl.textContent = levelLabel;
+
+    const advBtn = document.getElementById('b-advance-btn');
+    const genBtn = document.getElementById('b-generate-btn');
+    const hintEl = document.getElementById('b-level-hint');
+    if (advBtn) {
+      advBtn.classList.toggle('hidden', atTarget);
+      if (!atTarget) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
+    }
+    if (genBtn) genBtn.classList.toggle('hidden', !atTarget);
+    if (hintEl) {
+      hintEl.classList.toggle('hidden', BS.level <= 1);
+      if (BS.level > 1) {
+        hintEl.textContent = atTarget
+          ? `Livello ${BS.level} di ${BS.level} — completa le scelte e genera la scheda.`
+          : `Livello ${BS.currentLevel} di ${BS.level} — completa le scelte poi avanza.`;
+      }
+    }
+
     bRenderScores();
     bRenderChoices();
     if (hasSpells) bRenderSpells(); // async, no await — renders progressively
@@ -3493,10 +3517,60 @@ function bAttachChoiceEvents(choice) {
 
 // ── Spell choices ───────────────────────────────────────
 
+// Group spellbook choices by spellLevelMax to avoid showing many identical boxes.
+// Non-spellbook choices (cantripsKnown, spellsKnown, etc.) pass through unchanged.
+// Each merged group gets id "__spellbook_maxN" and carries _members for distribution.
+function bGroupSpellChoices(all) {
+  const out = [];
+  const spellbookByMax = new Map(); // spellLevelMax → group entry
+
+  for (const c of all) {
+    if (c.kind !== 'spellbook') { out.push(c); continue; }
+
+    const key = c.spellLevelMax ?? 'x';
+    if (!spellbookByMax.has(key)) {
+      const grp = {
+        ...c,
+        id:      `__spellbook_max${key}`,
+        count:   c.count ?? 0,
+        _members: [{ id: c.id, count: c.count ?? 99 }],
+      };
+      spellbookByMax.set(key, grp);
+      out.push(grp);
+    } else {
+      const grp = spellbookByMax.get(key);
+      // Use the path of the latest member (usually the most inclusive one)
+      grp.path  = c.path;
+      grp.count = (grp.count ?? 0) + (c.count ?? 0);
+      grp._members.push({ id: c.id, count: c.count ?? 99 });
+    }
+  }
+  return out;
+}
+
+// Expand merged spellbook groups back into per-ID selections for bBuildBody.
+function bExpandSpellChoices(grouped, merged) {
+  const out = {};
+  for (const c of grouped) {
+    if (!c._members) {
+      out[c.id] = merged[c.id] || [];
+      continue;
+    }
+    const selected = merged[c.id] || [];
+    let offset = 0;
+    for (const m of c._members) {
+      out[m.id] = selected.slice(offset, offset + m.count);
+      offset   += m.count;
+    }
+  }
+  return out;
+}
+
 async function bRenderSpells() {
   const el  = document.getElementById('b-spells-ui');
   if (!el) return;
-  const all = BD?.spellChoiceManifest?.choices || [];
+  const raw = BD?.spellChoiceManifest?.choices || [];
+  const all = bGroupSpellChoices(raw);
 
   // Show skeletons first
   el.innerHTML = all.map(c => {
@@ -3607,12 +3681,13 @@ async function bLoadChoices() {
       classSource:      BS.classSource,
       background:       BS.background,
       backgroundSource: BS.backgroundSource,
-      level:            BS.level,
+      level:            1,
       locale:           BS.locale,
     });
-    // Reset choices when draft changes (identity changed)
+    // Reset all choices and start at level 1
     BS.choices      = {};
     BS.spellChoices = {};
+    BS.currentLevel = 1;
     bsSave();
     bRenderForm();
   } catch(e) {
@@ -3621,6 +3696,42 @@ async function bLoadChoices() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Carica Scelte →';
+  }
+}
+
+// ── Advance to next level ───────────────────────────────
+
+async function bAdvanceLevel() {
+  const nextLevel = BS.currentLevel + 1;
+  if (nextLevel > BS.level) return;
+
+  const btn = document.getElementById('b-advance-btn');
+  btn.disabled = true;
+  btn.textContent = 'Caricamento…';
+
+  const errEl = document.getElementById('b-errors');
+  errEl.classList.add('hidden');
+
+  try {
+    BD = await apiFetch('/builds/draft', {
+      race:             BS.race,
+      raceSource:       BS.raceSource,
+      class:            BS.class,
+      classSource:      BS.classSource,
+      background:       BS.background,
+      backgroundSource: BS.backgroundSource,
+      level:            nextLevel,
+      fromLevel:        BS.currentLevel,
+      locale:           BS.locale,
+    });
+    BS.currentLevel = nextLevel;
+    bsSave();
+    bRenderForm();
+  } catch(e) {
+    errEl.innerHTML = `Errore: ${esc(e.message || 'sconosciuto')}`;
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = `Avanza al livello ${nextLevel} →`;
   }
 }
 
@@ -3643,6 +3754,9 @@ async function apiPost(path, body) {
 }
 
 function bBuildBody() {
+  const raw     = BD?.spellChoiceManifest?.choices || [];
+  const grouped = bGroupSpellChoices(raw);
+  const spellChoices = bExpandSpellChoices(grouped, BS.spellChoices);
   return {
     race:             BS.race,
     raceSource:       BS.raceSource,
@@ -3653,7 +3767,7 @@ function bBuildBody() {
     level:            BS.level,
     locale:           BS.locale,
     choices:          BS.choices,
-    spellChoices:     BS.spellChoices,
+    spellChoices,
     abilityScores:    { method: BS.method, assignments: BS.assignments },
   };
 }
@@ -4010,6 +4124,7 @@ function initBuilder() {
     closeBtn:   document.getElementById('builder-close-btn'),
     resetBtn:   document.getElementById('b-reset-btn'),
     loadBtn:    document.getElementById('b-load-btn'),
+    advanceBtn: document.getElementById('b-advance-btn'),
     generateBtn:document.getElementById('b-generate-btn'),
     backBtn:    document.getElementById('b-back-btn'),
     raceEl:     document.getElementById('b-race'),
@@ -4031,6 +4146,7 @@ function initBuilder() {
   });
 
   D_builder.loadBtn?.addEventListener('click', bLoadChoices);
+  D_builder.advanceBtn?.addEventListener('click', bAdvanceLevel);
   D_builder.generateBtn?.addEventListener('click', bGenerate);
   D_builder.backBtn?.addEventListener('click', () => {
     document.getElementById('b-sheet-view').classList.add('hidden');
@@ -4041,7 +4157,7 @@ function initBuilder() {
   D_builder.raceEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.race = slug || ''; BS.raceSource = src || '';
-    BD = null; bsSave();
+    BD = null; BS.currentLevel = 1; bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
     document.getElementById('b-sec-choices').classList.add('hidden');
     document.getElementById('b-sec-spells').classList.add('hidden');
@@ -4050,7 +4166,7 @@ function initBuilder() {
   D_builder.classEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.class = slug || ''; BS.classSource = src || '';
-    BD = null; bsSave();
+    BD = null; BS.currentLevel = 1; bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
     document.getElementById('b-sec-choices').classList.add('hidden');
     document.getElementById('b-sec-spells').classList.add('hidden');
@@ -4059,7 +4175,7 @@ function initBuilder() {
   D_builder.bgEl?.addEventListener('change', e => {
     const [slug, src] = e.target.value.split('|');
     BS.background = slug || ''; BS.backgroundSource = src || '';
-    BD = null; bsSave();
+    BD = null; BS.currentLevel = 1; bsSave();
     document.getElementById('b-sec-scores').classList.add('hidden');
     document.getElementById('b-sec-choices').classList.add('hidden');
     document.getElementById('b-sec-spells').classList.add('hidden');
@@ -4067,7 +4183,7 @@ function initBuilder() {
   });
   D_builder.levelEl?.addEventListener('change', e => {
     BS.level = Math.max(1, Math.min(20, +e.target.value || 1));
-    BD = null; bsSave();
+    BD = null; BS.currentLevel = 1; bsSave();
   });
   D_builder.nameEl?.addEventListener('input', e => { BS.name = e.target.value; bsSave(); });
 
