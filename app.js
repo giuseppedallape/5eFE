@@ -3209,6 +3209,7 @@ function bRenderForm() {
     const hintEl = document.getElementById('b-level-hint');
     if (advBtn) {
       advBtn.classList.toggle('hidden', !canAdvance);
+      advBtn.disabled = false;
       if (canAdvance) advBtn.textContent = `Avanza al livello ${BS.currentLevel + 1} →`;
     }
     if (genBtn) genBtn.classList.remove('hidden'); // always available once draft loaded
